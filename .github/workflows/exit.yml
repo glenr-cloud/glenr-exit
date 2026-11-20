@@ -1,0 +1,102 @@
+# exit.yml — continuous integration for the exit kit.
+#
+# Gate check 7 (T1, kind) and gate check 8 (T1b, Gateway API + CloudNativePG,
+# score-k8s route) are the cluster runs. They consume a full exit fixture
+# (testdata/fixture-export/, generated from the exit-profile goldens) signed
+# with the deployed export key, so they are gated on that fixture existing and
+# skip until it is committed (the exit-profile lane, GLE-3141, produces it).
+#
+# The `selftest` job runs now: it builds a signed export from testdata/fixture
+# with a throwaway key and proves verify.sh and check.sh accept a good export
+# and refuse each bad case, and that images.sh rewrite keeps the digest.
+#
+# Runs on GitHub-hosted runners only. This repository becomes public at PUBLISH
+# (D-145.6); a public repo must never run a fork's pull request on a
+# self-hosted runner, so no `self-hosted` or `glenr-ci` label may appear here.
+name: exit-kit
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yq
+        run: |
+          curl -sSL -o /tmp/yq https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_amd64
+          chmod +x /tmp/yq
+          sudo mv /tmp/yq /usr/local/bin/yq
+          yq --version
+      - name: Self-test (verify, check, rewrite)
+        run: bash bin/selftest.sh
+
+  # Gate check 7: apply the fixture export on kind (T1) and pass P-1 and P-3.
+  t1:
+    needs: selftest
+    if: ${{ hashFiles('testdata/fixture-export/**') != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: exit-t1
+      - name: Install Traefik (default Ingress class)
+        run: |
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update
+          helm install traefik traefik/traefik \
+            --namespace traefik --create-namespace \
+            --set providers.kubernetesIngress.publishedService.enabled=true
+      - name: Install yq and run the README steps
+        run: |
+          curl -sSL -o /tmp/yq https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_amd64
+          chmod +x /tmp/yq && sudo mv /tmp/yq /usr/local/bin/yq
+          bin/verify.sh testdata/fixture-export
+          bin/check.sh testdata/fixture-export/manifests/production
+          kubectl apply -f testdata/fixture-export/manifests/production/_namespace.yaml
+          kubectl apply -f testdata/fixture-export/manifests/production/   # P-1: exits 0
+      - name: P-3 Deployments available, CronJob job completes
+        run: |
+          for d in $(kubectl -n production get deploy -o name); do
+            kubectl -n production rollout status "$d" --timeout=10m
+          done
+
+  # Gate check 8: the score-k8s route on T1b (Gateway API + CloudNativePG), P-9.
+  t1b:
+    needs: t1
+    if: ${{ hashFiles('testdata/fixture-export/**') != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: exit-t1b
+      - name: Install Gateway API CRDs and Traefik Gateway provider
+        run: |
+          kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update
+          helm install traefik traefik/traefik --namespace traefik --create-namespace \
+            --set providers.kubernetesGateway.enabled=true --set gateway.enabled=true
+      - name: Install CloudNativePG operator
+        run: |
+          kubectl apply --server-side -f https://raw.githubusercontent.com/cloudnative-pg/cloudnative-pg/release-1.24/releases/cnpg-1.24.0.yaml
+      - name: score-k8s route for staging (P-9)
+        run: |
+          curl -sSL -o /tmp/sk https://github.com/score-spec/score-k8s/releases/download/0.22.0/score-k8s_0.22.0_linux_amd64
+          chmod +x /tmp/sk && sudo mv /tmp/sk /usr/local/bin/score-k8s
+          score-k8s init --no-sample
+          cp testdata/fixture-export/glenr.provisioners.yaml .score-k8s/
+          score-k8s generate -n production -o /tmp/manifests.yaml \
+            testdata/fixture-export/score-k8s/web.yaml \
+            testdata/fixture-export/overrides/staging/web.score.yaml
+          kubectl apply -f /tmp/manifests.yaml
+          kubectl -n production rollout status deploy/web --timeout=10m
