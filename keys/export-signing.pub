@@ -1,11 +1,3 @@
-# PLACEHOLDER — replaced at lane PUBLISH (design/145 D-145.6 condition 3).
-#
-# This file will hold the PKIX PEM Ed25519 public key that verifies an export's
-# MANIFEST.sig: the same key the export page (design/141 §5.5) shows. Its
-# private key lives only in Doppler as GLENR_EXIT_RELEASE_SIGNING_KEY's export
-# counterpart, never in this repository. PUBLISH writes the key byte for byte
-# from the deployed register key and posts its fingerprint, never the private
-# key.
-#
-# Until PUBLISH fills it, bin/verify.sh fails here on purpose rather than
-# accepting anything: this is not a PEM block, so OpenSSL refuses it.
+-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEArxxG++dpGFMrP+i5YOrQC7BbPRwlxitFl+XCAVQcGuo=
+-----END PUBLIC KEY-----
