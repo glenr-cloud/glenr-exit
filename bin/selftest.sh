@@ -104,6 +104,64 @@ kind: Secret
 metadata: {name: leak}
 data: {k: aGVsbG8=}'
 
+# A malicious object can hide inside a `kind: List` or a .json file; both are
+# applied by kubectl in directory mode, so check.sh must inspect them.
+d_list=$work/bad-list
+cp -R "$here/testdata/fixture/manifests" "$d_list"
+cat >> "$d_list/production/web.yaml" <<'YAML'
+---
+apiVersion: v1
+kind: List
+items:
+- apiVersion: cilium.io/v2
+  kind: CiliumNetworkPolicy
+  metadata: {name: hidden}
+YAML
+if "$here/bin/check.sh" "$d_list" 2>/dev/null; then
+	echo "SELFTEST FAIL: check accepted a Cilium object inside a List" >&2
+	exit 1
+fi
+echo "  refused a Cilium object inside a List"
+echo "== check refuses a bad object in a .json file =="
+d_json=$work/bad-json
+cp -R "$here/testdata/fixture/manifests" "$d_json"
+cat > "$d_json/production/bad.json" <<'JSON'
+{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": {"name": "bad"}}
+JSON
+if "$here/bin/check.sh" "$d_json" 2>/dev/null; then
+	echo "SELFTEST FAIL: check accepted a Cilium object in a .json file" >&2
+	exit 1
+fi
+echo "  refused a .json violation"
+echo "== check refuses a file that does not parse =="
+d_bad=$work/bad-yaml
+cp -R "$here/testdata/fixture/manifests" "$d_bad"
+printf 'apiVersion: v1\n  bad: [unclosed\n' > "$d_bad/production/broken.yaml"
+if "$here/bin/check.sh" "$d_bad" 2>/dev/null; then
+	echo "SELFTEST FAIL: check passed over unparsable YAML (fail-open)" >&2
+	exit 1
+fi
+echo "  refused unparsable YAML"
+
+# verify.sh must refuse a symlink added to a signed export: kubectl follows a
+# symlinked manifest in directory mode.
+echo "== verify refuses an added symlink =="
+exp3=$work/export3
+cp -R "$here/testdata/fixture" "$exp3"
+(
+	cd "$exp3"
+	find . \( -type f -o -type l \) ! -name MANIFEST ! -name MANIFEST.sig | sed 's|^\./||' | sort |
+		while IFS= read -r p; do printf '%s  %s\n' "$(sha256sum "$p" | cut -d' ' -f1)" "$p"; done > MANIFEST
+)
+openssl pkeyutl -sign -inkey "$work/key.pem" -rawin -in "$exp3/MANIFEST" | base64 -w0 > "$exp3/MANIFEST.sig"
+echo >> "$exp3/MANIFEST.sig"
+ln -s /etc/hostname "$exp3/manifests/production/evil.yaml"
+if "$here/bin/verify.sh" "$exp3" "$work/pub.pem" 2>/dev/null; then
+	echo "SELFTEST FAIL: verify accepted an added symlink" >&2
+	exit 1
+fi
+echo "  refused an added symlink"
+
 echo "== images.sh rewrite changes the host and keeps the digest =="
 rw=$work/rw
 cp -R "$here/testdata/fixture" "$rw"

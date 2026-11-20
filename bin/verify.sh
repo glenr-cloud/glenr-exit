@@ -48,11 +48,13 @@ fi
 #    relative paths in MANIFEST resolve. --strict refuses a malformed line.
 ( cd "$dir" && sha256sum -c --strict MANIFEST >/dev/null ) || fail "a file does not match MANIFEST"
 
-# 3. Every file present is listed. Enumerate the regular files below the
-#    export root, drop MANIFEST and MANIFEST.sig (the signer writes those and
-#    never lists them), and compare the two sets both ways.
+# 3. Every file present is listed. Enumerate the regular files and symlinks
+#    below the export root, drop MANIFEST and MANIFEST.sig (the signer writes
+#    those and never lists them), and compare the two sets both ways. A
+#    symlink is counted: for an export it is always tampering, and kubectl
+#    follows a symlinked manifest in directory mode.
 cut -c67- "$dir/MANIFEST" | sort > "$tmp/listed"
-( cd "$dir" && find . -type f | sed 's|^\./||' ) \
+( cd "$dir" && find . \( -type f -o -type l \) | sed 's|^\./||' ) \
 	| grep -v -x -e 'MANIFEST' -e 'MANIFEST.sig' | sort > "$tmp/present" || true
 
 if extra=$(comm -13 "$tmp/listed" "$tmp/present") && [ -n "$extra" ]; then

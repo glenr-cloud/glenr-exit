@@ -38,10 +38,27 @@ jobs:
       - name: Self-test (verify, check, rewrite)
         run: bash bin/selftest.sh
 
+  # hashFiles is empty in a job-level `if` (it is evaluated before checkout), so
+  # detect the fixture in a step that has the repository, and gate t1/t1b on it.
+  detect:
+    needs: selftest
+    runs-on: ubuntu-latest
+    outputs:
+      fixture: ${{ steps.present.outputs.fixture }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: present
+        run: |
+          if [ -n "$(find testdata/fixture-export -type f 2>/dev/null | head -1)" ]; then
+            echo "fixture=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fixture=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # Gate check 7: apply the fixture export on kind (T1) and pass P-1 and P-3.
   t1:
-    needs: selftest
-    if: ${{ hashFiles('testdata/fixture-export/**') != '' }}
+    needs: [selftest, detect]
+    if: needs.detect.outputs.fixture == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,8 +88,8 @@ jobs:
 
   # Gate check 8: the score-k8s route on T1b (Gateway API + CloudNativePG), P-9.
   t1b:
-    needs: t1
-    if: ${{ hashFiles('testdata/fixture-export/**') != '' }}
+    needs: [detect, t1]
+    if: needs.detect.outputs.fixture == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

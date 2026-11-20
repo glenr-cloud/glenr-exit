@@ -33,6 +33,7 @@ copy)
 	images=${2}
 	dest=${3%/}
 	command -v crane >/dev/null 2>&1 || { echo "images: crane is required" >&2; exit 2; }
+	command -v jq >/dev/null 2>&1 || { echo "images: jq is required" >&2; exit 2; }
 	[ -f "$images" ] || { echo "images: $images not found" >&2; exit 2; }
 	# Per app and environment: the image reference and its digest.
 	copied=0
@@ -60,15 +61,17 @@ rewrite)
 	command -v yq >/dev/null 2>&1 || { echo "images: yq (mikefarah v4) is required" >&2; exit 2; }
 	[ -d "$dir" ] || { echo "images: $dir is not a directory" >&2; exit 2; }
 	export NEW=$dest
-	files=$(find "$dir" -type f \( -name '*.yaml' -o -name '*.yml' \) | sort)
-	[ -n "$files" ] || { echo "images: no YAML files under $dir" >&2; exit 2; }
 	# Rewrite the registry host (the segment before the first '/') of every
 	# map that has a string `image`, keeping the rest of the reference and the
-	# digest. A reference with no '/' (a bare image name) is left alone.
-	for f in $files; do
+	# digest. A reference with no '/' (a bare image name) is left alone. Read
+	# paths with a null delimiter so a space in a path is not split.
+	count=0
+	while IFS= read -r -d '' f; do
 		yq -i '(.. | select(tag == "!!map" and has("image"))) |= (.image |= (if test("/") then sub("^[^/]+"; strenv(NEW)) else . end))' "$f"
-	done
-	echo "images: rewrote registry host to $dest in $(echo "$files" | wc -l | tr -d ' ') file(s)"
+		count=$((count + 1))
+	done < <(find "$dir" -type f \( -name '*.yaml' -o -name '*.yml' \) -print0)
+	[ "$count" -ne 0 ] || { echo "images: no YAML files under $dir" >&2; exit 2; }
+	echo "images: rewrote registry host to $dest in $count file(s)"
 	;;
 *)
 	usage

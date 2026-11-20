@@ -32,7 +32,7 @@ values are write-only in Glenr and are not in the export.
 - `kubectl` pointed at your cluster.
 - `openssl` (3.x), `sha256sum`, `base64` (coreutils) for `bin/verify.sh`.
 - `yq` v4 (Mike Farah) for `bin/check.sh` and `bin/images.sh rewrite`.
-- `crane` for `bin/images.sh copy`.
+- `crane` and `jq` for `bin/images.sh copy`.
 
 ## Steps
 
@@ -79,7 +79,18 @@ same or a later major as the export records (design/145 §3.1, §4.3). Restore
 the dump you received, then confirm the row counts match the export's record
 before you apply the workloads.
 
-### 5. Apply
+### 5. Check the manifest set
+
+```sh
+bin/check.sh manifests/production
+```
+
+`bin/check.sh` refuses a manifest set that an export must never contain: an
+apiVersion outside the allowed groups (core, apps, batch, autoscaling, policy,
+networking.k8s.io), the string `glenr.io`, or a Secret with a value. Run it
+before you apply.
+
+### 6. Apply
 
 ```sh
 kubectl apply -f manifests/production/_namespace.yaml
@@ -89,16 +100,7 @@ kubectl apply -f manifests/production/
 `_namespace.yaml` goes first: it creates the Namespace, the ResourceQuota, the
 LimitRange and the default-deny NetworkPolicy the workloads expect.
 
-### 6. Check
-
-```sh
-bin/check.sh manifests/production
-```
-
-`bin/check.sh` refuses a manifest set that an export must never contain: an
-apiVersion outside the allowed groups (core, apps, batch, autoscaling, policy,
-networking.k8s.io), the string `glenr.io`, or a Secret with a value. Then
-confirm the workloads came up:
+### 7. Confirm
 
 ```sh
 kubectl -n production rollout status deploy/web --timeout=10m
