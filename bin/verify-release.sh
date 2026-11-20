@@ -38,4 +38,5 @@ fi
 
 ( cd "$dir" && sha256sum -c --strict SHA256SUMS >/dev/null ) || fail "a file does not match SHA256SUMS"
 
-echo "verify-release: ok ($(wc -l < "$dir/SHA256SUMS" | tr -d ' ') file(s), signed by $pub)"
+echo "verify-release: ok, signed by $pub:"
+cut -c67- "$dir/SHA256SUMS" | sed 's/^/  /'

@@ -164,6 +164,13 @@ the export key.
 Print a fingerprint with
 `openssl pkey -pubin -in keys/release.pub -outform DER | sha256sum`.
 
+The script, the key and this table come from the same place as the release.
+Run `bin/verify-release.sh` from a clone of this repository at the release
+tag, not from the tarball you are checking, and compare the key's fingerprint
+with a copy you obtained separately: one you saved from an earlier release, or
+one Glenr gives you on request. The export key's fingerprint is also on the
+Glenr data register page, `https://www.glenr.io/data-act`.
+
 ## Licence
 
 Pending (design/145 R-145.7).

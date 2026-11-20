@@ -192,7 +192,7 @@ echo "  two distinct Ed25519 keys"
 # tarball. The throwaway key stands in for the release key.
 echo "== release.sh and verify-release.sh =="
 rel=$work/rel
-GLENR_EXIT_RELEASE_SIGNING_KEY=$(cat "$work/key.pem") "$here/bin/release.sh" HEAD \
+GLENR_EXIT_SELFTEST=1 GLENR_EXIT_RELEASE_SIGNING_KEY=$(cat "$work/key.pem") "$here/bin/release.sh" HEAD \
 	--provisioners "$here/glenr.provisioners.yaml" --public-key "$work/pub.pem" --out "$rel" >/dev/null
 "$here/bin/verify-release.sh" "$rel" "$work/pub.pem" >/dev/null
 echo "  built and verified under the signing key"
@@ -211,21 +211,28 @@ if "$here/bin/verify-release.sh" "$rel" "$work/pub.pem" 2>/dev/null; then
 fi
 echo "  refused a changed tarball"
 
-# release.sh refuses before signing when the key is not the release key, or when
-# the provisioners file differs from the operator copy.
-if GLENR_EXIT_RELEASE_SIGNING_KEY=$(cat "$work/key.pem") "$here/bin/release.sh" HEAD \
-	--provisioners "$here/glenr.provisioners.yaml" --out "$work/rel2" 2>/dev/null; then
-	echo "SELFTEST FAIL: release.sh signed with a key that is not keys/release.pub" >&2
-	exit 1
-fi
-echo "  refused a key that is not keys/release.pub"
+# release.sh refuses before signing when the key is not the release key, when
+# the provisioners file differs from the operator copy, when --public-key is
+# used outside the self-test, or when the key does not parse. Each case checks
+# the reason, so an unrelated failure does not count as a pass.
+expect_refusal() { # <message substring> <description> -- command...
+	local want=$1 what=$2; shift 3
+	if "$@" > /dev/null 2> "$work/err"; then
+		echo "SELFTEST FAIL: release.sh accepted $what" >&2; exit 1
+	fi
+	grep -q -- "$want" "$work/err" || { echo "SELFTEST FAIL: $what refused for another reason:" >&2; cat "$work/err" >&2; exit 1; }
+	echo "  refused $what"
+}
+k=$(cat "$work/key.pem")
+expect_refusal "does not match the release public key" "a key that is not keys/release.pub" -- \
+	env GLENR_EXIT_RELEASE_SIGNING_KEY="$k" "$here/bin/release.sh" HEAD --provisioners "$here/glenr.provisioners.yaml" --out "$work/rel2"
 cp "$here/glenr.provisioners.yaml" "$work/prov-changed.yaml"
 echo "# changed" >> "$work/prov-changed.yaml"
-if GLENR_EXIT_RELEASE_SIGNING_KEY=$(cat "$work/key.pem") "$here/bin/release.sh" HEAD \
-	--provisioners "$work/prov-changed.yaml" --public-key "$work/pub.pem" --out "$work/rel3" 2>/dev/null; then
-	echo "SELFTEST FAIL: release.sh accepted a provisioners file that differs from the operator copy" >&2
-	exit 1
-fi
-echo "  refused a provisioners file that differs"
+expect_refusal "differs from" "a provisioners file that differs" -- \
+	env GLENR_EXIT_SELFTEST=1 GLENR_EXIT_RELEASE_SIGNING_KEY="$k" "$here/bin/release.sh" HEAD --provisioners "$work/prov-changed.yaml" --public-key "$work/pub.pem" --out "$work/rel3"
+expect_refusal "self-test only" "--public-key outside the self-test" -- \
+	env -u GLENR_EXIT_SELFTEST GLENR_EXIT_RELEASE_SIGNING_KEY="$k" "$here/bin/release.sh" HEAD --provisioners "$here/glenr.provisioners.yaml" --public-key "$work/pub.pem" --out "$work/rel4"
+expect_refusal "not a PEM private key" "a key that does not parse" -- \
+	env GLENR_EXIT_RELEASE_SIGNING_KEY='not a key' "$here/bin/release.sh" HEAD --provisioners "$here/glenr.provisioners.yaml" --out "$work/rel5"
 
 echo "SELFTEST OK"
