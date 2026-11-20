@@ -174,4 +174,58 @@ if ! grep -q 'registry.customer.example:5000/acme/web@sha256:1111111111111111111
 fi
 echo "  rewrote host, kept digest"
 
+# The two published keys: each is an Ed25519 PEM public key, and they differ
+# (design/145 §5.1: a release signed with the export key would verify as an
+# export).
+echo "== keys/export-signing.pub and keys/release.pub are distinct Ed25519 keys =="
+fp() { openssl pkey -pubin -in "$1" -outform DER 2>/dev/null | sha256sum | cut -d' ' -f1; }
+for k in export-signing release; do
+	openssl pkey -pubin -in "$here/keys/$k.pub" -noout -text 2>/dev/null | grep -q '^ED25519 Public-Key' \
+		|| { echo "SELFTEST FAIL: keys/$k.pub is not an Ed25519 public key" >&2; exit 1; }
+done
+[ "$(fp "$here/keys/export-signing.pub")" != "$(fp "$here/keys/release.pub")" ] \
+	|| { echo "SELFTEST FAIL: the export key and the release key are the same" >&2; exit 1; }
+echo "  two distinct Ed25519 keys"
+
+# release.sh builds and signs with the key in the environment; verify-release.sh
+# accepts it under the matching key and refuses every other key and a changed
+# tarball. The throwaway key stands in for the release key.
+echo "== release.sh and verify-release.sh =="
+rel=$work/rel
+GLENR_EXIT_RELEASE_SIGNING_KEY=$(cat "$work/key.pem") "$here/bin/release.sh" HEAD \
+	--provisioners "$here/glenr.provisioners.yaml" --public-key "$work/pub.pem" --out "$rel" >/dev/null
+"$here/bin/verify-release.sh" "$rel" "$work/pub.pem" >/dev/null
+echo "  built and verified under the signing key"
+for k in "$here/keys/export-signing.pub" "$here/keys/release.pub"; do
+	if "$here/bin/verify-release.sh" "$rel" "$k" 2>/dev/null; then
+		echo "SELFTEST FAIL: release verified under $k, which did not sign it" >&2
+		exit 1
+	fi
+done
+echo "  refused under keys/export-signing.pub and keys/release.pub"
+tarball=$(ls "$rel"/*.tar.gz)
+printf 'x' >> "$tarball"
+if "$here/bin/verify-release.sh" "$rel" "$work/pub.pem" 2>/dev/null; then
+	echo "SELFTEST FAIL: verify-release accepted a changed tarball" >&2
+	exit 1
+fi
+echo "  refused a changed tarball"
+
+# release.sh refuses before signing when the key is not the release key, or when
+# the provisioners file differs from the operator copy.
+if GLENR_EXIT_RELEASE_SIGNING_KEY=$(cat "$work/key.pem") "$here/bin/release.sh" HEAD \
+	--provisioners "$here/glenr.provisioners.yaml" --out "$work/rel2" 2>/dev/null; then
+	echo "SELFTEST FAIL: release.sh signed with a key that is not keys/release.pub" >&2
+	exit 1
+fi
+echo "  refused a key that is not keys/release.pub"
+cp "$here/glenr.provisioners.yaml" "$work/prov-changed.yaml"
+echo "# changed" >> "$work/prov-changed.yaml"
+if GLENR_EXIT_RELEASE_SIGNING_KEY=$(cat "$work/key.pem") "$here/bin/release.sh" HEAD \
+	--provisioners "$work/prov-changed.yaml" --public-key "$work/pub.pem" --out "$work/rel3" 2>/dev/null; then
+	echo "SELFTEST FAIL: release.sh accepted a provisioners file that differs from the operator copy" >&2
+	exit 1
+fi
+echo "  refused a provisioners file that differs"
+
 echo "SELFTEST OK"
