@@ -7,7 +7,7 @@
 # This is the part of gate check 7 that needs no cluster. The kind apply (P-1,
 # P-3) runs in the workflow once the EXIT-PROFILE fixture is in place.
 #
-# Requires: openssl (3), coreutils, yq (mikefarah v4).
+# Requires: openssl (3), coreutils, jq and yq (mikefarah v4).
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")/.." && pwd)
@@ -15,6 +15,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 command -v openssl >/dev/null 2>&1 || { echo "selftest: openssl is required" >&2; exit 2; }
+command -v jq >/dev/null 2>&1 || { echo "selftest: jq is required" >&2; exit 2; }
 command -v yq >/dev/null 2>&1 || { echo "selftest: yq (mikefarah v4) is required" >&2; exit 2; }
 
 exp=$work/export
@@ -173,6 +174,97 @@ if ! grep -q 'registry.customer.example:5000/acme/web@sha256:1111111111111111111
 	exit 1
 fi
 echo "  rewrote host, kept digest"
+
+echo "== images.sh rewrite keeps a library/ path =="
+if ! grep -q 'registry.customer.example:5000/library/postgres:16' "$rw/manifests/production/postgres.yaml"; then
+	echo "SELFTEST FAIL: rewrite did not keep the library/ path" >&2
+	grep 'image:' "$rw/manifests/production/postgres.yaml" >&2
+	exit 1
+fi
+echo "  kept library/postgres:16"
+
+# `copy` must skip a row that carries no image (the cell's database): before the
+# fix it handed crane an empty reference and the whole of step 5 failed. `plan`
+# prints what `copy` would do, without calling crane, so CI can hold both
+# properties below.
+echo "== images.sh plan skips a row with no image =="
+plan_err=$work/plan.err
+plan=$("$here/bin/images.sh" plan "$here/testdata/fixture/images.json" registry.customer.example:5000 2>"$plan_err")
+if ! grep -q 'skip db (no image)' "$plan_err"; then
+	echo "SELFTEST FAIL: plan (and so copy) did not skip the db row, which has no image" >&2
+	cat "$plan_err" >&2
+	exit 1
+fi
+if ! plan_rows=$(printf '%s\n' "$plan" | grep -c .); then
+	plan_rows=0
+fi
+if [ "$plan_rows" -ne 2 ]; then
+	echo "SELFTEST FAIL: plan printed $plan_rows row(s); want the 2 rows that carry an image" >&2
+	printf '%s\n' "$plan" >&2
+	exit 1
+fi
+echo "  skipped the db row, printed 2 rows"
+
+# The destination is not <dest>/<app>: it is the path `rewrite` keeps, so both
+# tools name the same place. `copy` writes a repository (a digest names content,
+# which the copy preserves; it is not a tag to push), and the manifests keep the
+# digest or tag.
+plan_row() { # plan_row <src> <dest> — refuse unless plan printed exactly this row
+	printf '%s\n' "$plan" | awk -F '\t' -v s="$1" -v d="$2" \
+		'$1 == s && $2 == d { found = 1 } END { exit !found }' && return 0
+	echo "SELFTEST FAIL: plan has no row '$1 -> $2'" >&2
+	printf '%s\n' "$plan" >&2
+	exit 1
+}
+echo "== images.sh plan names the path rewrite keeps =="
+plan_row 'registry.glenr.example/acme/web:1.0@sha256:1111111111111111111111111111111111111111111111111111111111111111' \
+	'registry.customer.example:5000/acme/web:1.0'
+plan_row 'docker.io/library/postgres:16' \
+	'registry.customer.example:5000/library/postgres:16'
+echo "  destinations use the path, not the app name"
+
+# Every planned destination must be a place the rewritten export pulls from:
+# compare repositories, because a copy destination names a repository while the
+# manifest names the digest or tag inside it.
+repo_of() {
+	local r=$1
+	r=${r%%@*}
+	case "${r##*/}" in
+	*:*) r=${r%:*} ;;
+	esac
+	printf '%s\n' "$r"
+}
+rewritten=$work/rewritten-images
+grep -rh '^[[:space:]]*image:' "$rw/manifests" | sed 's/^[[:space:]]*image:[[:space:]]*//' | sort -u >"$rewritten"
+while IFS=$'\t' read -r src to; do
+	if [ -z "$src" ]; then
+		continue
+	fi
+	found=0
+	while IFS= read -r ref; do
+		if [ "$(repo_of "$ref")" = "$(repo_of "$to")" ]; then
+			found=1
+			break
+		fi
+	done <"$rewritten"
+	if [ "$found" -ne 1 ]; then
+		echo "SELFTEST FAIL: copy fills $to; rewrite points at no such path" >&2
+		cat "$rewritten" >&2
+		exit 1
+	fi
+done <<<"$plan"
+echo "  every plan destination is a rewritten path"
+
+# plan is the CI view of copy, so a row table that does not parse must stop it
+# (exit 2). Reading it through a pipeline would hide the jq failure and print
+# no rows, which reads as "nothing to copy".
+echo "== images.sh plan refuses an images.json that does not parse =="
+printf '{"apps": [\n' >"$work/bad-images.json"
+if "$here/bin/images.sh" plan "$work/bad-images.json" registry.customer.example:5000 2>/dev/null; then
+	echo "SELFTEST FAIL: plan accepted an images.json that does not parse" >&2
+	exit 1
+fi
+echo "  refused"
 
 # The two published keys: each is an Ed25519 PEM public key, and they differ
 # (design/145 §5.1: a release signed with the export key would verify as an

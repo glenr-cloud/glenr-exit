@@ -13,6 +13,28 @@
           "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
         }
       ]
+    },
+    {
+      "name": "postgres",
+      "source": {"repository": "https://hub.docker.com/_/postgres", "provider": "dockerhub"},
+      "build_strategy": "image",
+      "environments": [
+        {
+          "environment": "production",
+          "image": "docker.io/library/postgres:16"
+        }
+      ]
+    },
+    {
+      "name": "db",
+      "managed": false,
+      "environments": [
+        {
+          "environment": "production",
+          "image": "",
+          "version": "16"
+        }
+      ]
     }
   ]
 }
