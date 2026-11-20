@@ -142,6 +142,28 @@ cluster runs (T1 with `kind`, T1b with the Gateway API and CloudNativePG) run
 once the full exit fixture from the exit-profile work is committed under
 `testdata/fixture-export/`.
 
+## Verify a release
+
+A release is a tag with three assets: `glenr-exit-<tag>.tar.gz`, `SHA256SUMS`
+and `SHA256SUMS.sig`. Download the three into one directory, then:
+
+```sh
+bin/verify-release.sh <download-dir>   # uses keys/release.pub
+```
+
+It checks the Ed25519 signature of `SHA256SUMS` under `keys/release.pub` and
+the tarball's SHA-256. The release key and the export key
+(`keys/export-signing.pub`) are different keys; a release does not verify under
+the export key.
+
+| Key | SHA-256 of the PKIX DER |
+|---|---|
+| `keys/export-signing.pub` | `ccce020a857b8a61092819e0c436af8b989d492ef0348a7d3f3ff9ce7159c661` |
+| `keys/release.pub` | `6adc5013da2b117d697208b7c1aa13ed256e2a6b36190aedfba4293e4d46923f` |
+
+Print a fingerprint with
+`openssl pkey -pubin -in keys/release.pub -outform DER | sha256sum`.
+
 ## Licence
 
 Pending (design/145 R-145.7).
