@@ -1,0 +1,18 @@
+{
+  "apps": [
+    {
+      "name": "web",
+      "source": {"repository": "https://github.com/glenr-cloud/pulse", "provider": "github", "path": "api"},
+      "dockerfile_path": "Dockerfile",
+      "build_strategy": "dockerfile",
+      "environments": [
+        {
+          "environment": "production",
+          "git_ref": "main",
+          "image": "registry.glenr.example/acme/web:1.0",
+          "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      ]
+    }
+  ]
+}
