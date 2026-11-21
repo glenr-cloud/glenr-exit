@@ -120,16 +120,18 @@ jobs:
           run "${cmds[0]}"
           run "${cmds[1]}"
           run "${cmds[2]}"
-          # Finding F-2 (GLE-3154): the pods in `manifests/` set no runAsNonRoot,
-          # so the namespace's Pod Security `restricted` label refuses them
-          # (`runAsNonRoot != true`). Set the label to `baseline`.
-          ns=$(yq 'select(.kind == "Namespace") | .metadata.name' ./export/manifests/production/_namespace.yaml)
-          kubectl label namespace "$ns" pod-security.kubernetes.io/enforce=baseline --overwrite
           run "${cmds[3]}"
           # README step 5: "fill the values".
           yq -i '.stringData |= with_entries(.value = "fixture-" + .key)' ./export/secrets/production.yaml
           run "${cmds[4]}"
           run "${cmds[5]}"          # P-1: exits 0
+          # Finding F-2 (GLE-3154): the pods in `manifests/` set no runAsNonRoot,
+          # so the namespace's Pod Security `restricted` label refuses them
+          # (`runAsNonRoot != true`). Step 7 applies `_namespace.yaml` again, which
+          # resets any label set before it, so the label goes on after step 7; the
+          # ReplicaSet and Job controllers retry the refused pods.
+          ns=$(yq 'select(.kind == "Namespace") | .metadata.name' ./export/manifests/production/_namespace.yaml)
+          kubectl label namespace "$ns" pod-security.kubernetes.io/enforce=baseline --overwrite
       - name: P-3 Deployments available, CronJob job completes
         run: |
           set -euo pipefail
