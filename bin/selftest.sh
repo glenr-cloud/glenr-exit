@@ -144,6 +144,70 @@ if "$here/bin/check.sh" "$d_bad" 2>/dev/null; then
 fi
 echo "  refused unparsable YAML"
 
+# A directory named addons holds objects of CRD-based add-ons that the customer
+# installs on their own cluster. check.sh skips it, says so, and still refuses
+# the same object anywhere else.
+echo "== check skips an addons directory (expect ok and a skip line) =="
+route='apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: web, namespace: exit-gate-production}
+spec:
+  rules: []'
+d_addons=$work/addons-ok
+cp -R "$here/testdata/fixture/manifests" "$d_addons"
+mkdir -p "$d_addons/production/addons/gateway-api"
+printf '%s\n' "$route" > "$d_addons/production/addons/gateway-api/route.yaml"
+addons_out=$("$here/bin/check.sh" "$d_addons") || { echo "SELFTEST FAIL: check refused an addons directory" >&2; exit 1; }
+case $addons_out in
+	*"skipping $d_addons/production/addons"*) ;;
+	*) echo "SELFTEST FAIL: check did not name the skipped addons directory" >&2; exit 1 ;;
+esac
+echo "  accepted and named the skipped directory"
+d_addons_env=$work/addons-env
+cp -R "$d_addons/production" "$d_addons_env"
+"$here/bin/check.sh" "$d_addons_env" >/dev/null || { echo "SELFTEST FAIL: check refused addons when run on the env directory" >&2; exit 1; }
+echo "  accepted with the environment directory as the argument"
+echo "== check still refuses the same object outside addons =="
+d_route=$work/addons-moved
+cp -R "$here/testdata/fixture/manifests" "$d_route"
+printf '%s\n' "$route" > "$d_route/production/route.yaml"
+if "$here/bin/check.sh" "$d_route" 2>/dev/null; then
+	echo "SELFTEST FAIL: check accepted a Gateway API object outside addons" >&2
+	exit 1
+fi
+echo "  refused a Gateway API object outside addons"
+echo "== check does not skip a directory that only starts with addons =="
+d_prefix=$work/addons-prefix
+cp -R "$here/testdata/fixture/manifests" "$d_prefix"
+mkdir -p "$d_prefix/production/addons-x"
+printf '%s\n' "$route" > "$d_prefix/production/addons-x/route.yaml"
+if "$here/bin/check.sh" "$d_prefix" 2>/dev/null; then
+	echo "SELFTEST FAIL: check skipped a directory named addons-x" >&2
+	exit 1
+fi
+echo "  refused a Gateway API object under addons-x"
+echo "== check does not skip a directory it is given as the argument =="
+if "$here/bin/check.sh" "$d_addons/production/addons" >/dev/null 2>&1; then
+	echo "SELFTEST FAIL: check skipped the addons directory it was asked to check" >&2
+	exit 1
+fi
+echo "  refused the Gateway API object when addons itself is the argument"
+
+# Real exports set metadata.namespace on every namespaced object and Secret; the
+# fixture must do the same so the kit is tested against that shape. Namespace is
+# the one cluster-scoped kind in the fixture.
+echo "== fixture names a namespace on every namespaced object =="
+nons=$(find "$here/testdata/fixture/manifests" "$here/testdata/fixture/secrets" -type f -name '*.yaml' | sort |
+	while IFS= read -r f; do
+		yq -N -r 'select(.kind != "Namespace") | select(.metadata.namespace == null) | .kind + "/" + .metadata.name' "$f"
+	done)
+if [ -n "$nons" ]; then
+	echo "SELFTEST FAIL: objects without metadata.namespace:" >&2
+	echo "$nons" >&2
+	exit 1
+fi
+echo "  0 namespaced objects without metadata.namespace"
+
 # verify.sh must refuse a symlink added to a signed export: kubectl follows a
 # symlinked manifest in directory mode.
 echo "== verify refuses an added symlink =="

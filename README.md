@@ -92,7 +92,9 @@ bin/check.sh ./export/manifests/production
 `bin/check.sh` refuses a manifest set that an export must never contain: an
 apiVersion outside the allowed groups (core, apps, batch, autoscaling, policy,
 networking.k8s.io), the string `glenr.io`, or a Secret with a value. Run it
-after `rewrite` and before you apply anything.
+after `rewrite` and before you apply anything. It skips a directory named
+`addons` (optional CRD-based add-ons such as Gateway API) and names it in its
+output; step 7 does not apply it, and you review and apply it yourself.
 
 ### 4. Create the namespace
 

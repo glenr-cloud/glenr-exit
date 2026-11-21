@@ -7,8 +7,8 @@
 # their own. It is tested against the platform render by behaviour parity
 # (`render/provisioners_parity_test.go`, CI job `provisioner-parity`).
 #
-# Added to the cell export under D-145.5. Public wording about this file waits
-# on R-145.9 / D-145.9 (owner) and the D-145.8 re-rate.
+# File: the export copy of glenr.provisioners.yaml, byte for byte the file in
+# github.com/glenr-cloud/glenr-exit. Licence: Apache-2.0 (LICENSE in that repository).
 #
 # Use: `score-k8s init`, then copy this file into `.score-k8s/`. The file name
 # sorts before `zz-default.provisioners.yaml`, and score-k8s takes the first
