@@ -157,7 +157,11 @@ from the same operator file as the one at the root of this repository;
 `bin/release.sh` refuses to release when this repository's copy differs from
 the operator's.
 
+Step 2 rewrote only `manifests/`. Point the Score documents at your registry
+too, then render:
+
 ```sh
+bin/images.sh rewrite ./export/score-k8s <your-registry>
 cd ./export
 mkdir -p .score-k8s && cp glenr.provisioners.yaml .score-k8s/
 score-k8s init --no-sample --patch-templates overrides/production/score-k8s-patch.tpl
@@ -167,7 +171,9 @@ score-k8s generate score-k8s/web.yaml \
 ```
 
 Run `score-k8s generate` once per app in `score-k8s/`, each with its own
-`--overrides-file`. `overrides/README.md` in the export lists the command for
+`--overrides-file`. `<namespace>` must exist before you apply the result: step 4
+creates it, or add `--generate-namespace` to have score-k8s write a Namespace
+object. `overrides/README.md` in the export lists the command for
 every app.
 
 Keep plain files and secret files in separate directories. score-k8s mounts
