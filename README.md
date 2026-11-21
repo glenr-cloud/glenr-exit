@@ -36,6 +36,13 @@ export.
 - `yq` v4 (Mike Farah) for `bin/check.sh` and `bin/images.sh rewrite`.
 - `jq` for `bin/images.sh plan`; `crane` and `jq` for `bin/images.sh copy`.
 
+## Cluster requirements
+
+| Need | Why | If your cluster lacks it |
+|---|---|---|
+| User namespaces on the nodes (the kubelet honours `hostUsers: false`) | The exit profile writes `hostUsers: false` into every pod spec of `manifests/`. That field is what lets the pods pass the namespace's Pod Security level `restricted` (`_namespace.yaml` sets `enforce: restricted`) without a `runAsNonRoot` setting. Glenr's test cluster (k3s v1.35 on one server, 2026-11-20) met it. | The cluster refuses the pods (on `kind`: `error mounting "sysfs" ... operation not permitted`). Removing the field alone makes `restricted` refuse them (`runAsNonRoot != true`). Use the two commands in step 7 for a cluster without user namespaces: remove the field and set the namespace's level to `baseline`. |
+| Pod Security level `baseline` for the second route | score-k8s writes no `securityContext`, so `restricted` refuses its Deployments. | Step "The second route" sets the level after step 4. |
+
 ## Steps
 
 Run every command from the root of a clone of this repository, with the export
@@ -133,11 +140,32 @@ before you apply the workloads.
 
 ### 7. Apply
 
+A cluster without user namespaces (see "Cluster requirements") needs two
+commands around the apply: the first before it, the second after it.
+
+Before the apply, on a cluster without user namespaces: remove `hostUsers` from
+the manifests. This edits files of the export, so run it after step 1:
+
+```sh
+find ./export/manifests/production -name '*.yaml' -exec yq -i 'del(.spec.template.spec.hostUsers) | del(.spec.jobTemplate.spec.template.spec.hostUsers)' {} \;
+```
+
+The apply, on every cluster:
+
 ```sh
 kubectl apply -f ./export/manifests/production/
 ```
 
 This applies `_namespace.yaml` again (no change) and every app's objects.
+
+After the apply, on a cluster without user namespaces: set the namespace's Pod
+Security level to `baseline`. Run it after the apply, because the apply restores
+the `restricted` label that `_namespace.yaml` carries. The ReplicaSet and Job
+controllers retry the pods the namespace refused in the meantime.
+
+```sh
+kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=baseline --overwrite
+```
 
 ### 8. Confirm
 
@@ -160,7 +188,21 @@ from the same operator file as the one at the root of this repository;
 the operator's.
 
 Step 2 rewrote only `manifests/`. Point the Score documents at your registry
-too, then render:
+too. score-k8s writes no `securityContext` into its Deployments, so the
+namespace's Pod Security level `restricted` refuses them. After step 4, set the
+level to `baseline`, and allow ingress into the namespace: step 4's
+default-deny NetworkPolicy has no allow policy for this route (the `manifests/`
+route carries `web-from-ingress`; score-k8s renders none).
+`examples/score-k8s-allow-ingress.yaml` allows pods of the namespace, the
+namespace `traefik` (change it to your ingress controller's namespace) and
+`cnpg-system`:
+
+```sh
+kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=baseline --overwrite
+kubectl -n <namespace> apply -f examples/score-k8s-allow-ingress.yaml
+```
+
+Then render:
 
 ```sh
 bin/images.sh rewrite ./export/score-k8s <your-registry>
@@ -211,8 +253,8 @@ pull request:
 | Job | What it runs |
 |---|---|
 | `selftest` | `bin/selftest.sh`: builds a signed export from `testdata/fixture` with a throwaway key and proves `verify.sh` and `check.sh` accept a good export and refuse each bad case |
-| `t1` | on `kind` (Kubernetes 1.35) with Traefik as the default Ingress class: steps 1, 3, 4, 5, 7 and 8 against the export in `fixtures/exit-profile/`; every `Deployment` becomes available and the `tick` CronJob's Job completes |
-| `t1b` | on `kind` with the Gateway API CRDs, Traefik's Gateway provider with a Gateway named `default`, and the CloudNativePG operator, each from its upstream release: the score-k8s route, then the restore of `fixtures/data/maindb.dump` with `pg_restore` (step 6), then a check that `web` reads its mounted files and variables and answers through the Gateway |
+| `t1` | on `kind` (Kubernetes 1.35, no user namespaces) with Traefik as the default Ingress class: steps 1, 3, 4, 5, 7 (with "A cluster without user namespaces") and 8 against the export in `fixtures/exit-profile/`; every `Deployment` becomes available and the `tick` CronJob's Job completes |
+| `t1b` | on `kind` with the Gateway API CRDs, Traefik's Gateway provider with a Gateway named `default`, and the CloudNativePG operator, each from its upstream release: the score-k8s route with its `baseline` label and `examples/score-k8s-allow-ingress.yaml`, then the restore of `fixtures/data/maindb.dump` with `pg_restore` (step 6), then a check that `web` reads its mounted files and variables and answers through the Gateway |
 
 Each cluster job lists its README commands, fails when one is missing from this
 file, and runs the same strings. The export is signed in the job with a key it
