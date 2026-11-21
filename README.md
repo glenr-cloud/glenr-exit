@@ -170,6 +170,10 @@ score-k8s generate score-k8s/web.yaml \
   --namespace <namespace> -o manifests.yaml
 ```
 
+Compare each `image:` in `score-k8s/` with the destinations
+`bin/images.sh plan` printed: a path that is not in that list was not copied,
+and a pod using it cannot pull its image.
+
 Run `score-k8s generate` once per app in `score-k8s/`, each with its own
 `--overrides-file`. `<namespace>` must exist before you apply the result: step 4
 creates it, or add `--generate-namespace` to have score-k8s write a Namespace
