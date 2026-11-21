@@ -22,8 +22,8 @@
 # A directory named `addons` below the manifest directory is skipped and named
 # in the output. It holds optional objects of CRD-based add-ons (for example
 # Gateway API under addons/gateway-api/) that the customer installs on their own
-# cluster; `kubectl apply -f <env>/` does not descend into it, and the allowlist
-# above does not apply to them.
+# cluster; `kubectl apply -f <env>/` does not descend into it. None of the checks
+# above (allowlist, `glenr.io`, Secret values) run on files inside it.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then

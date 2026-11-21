@@ -176,6 +176,16 @@ if "$here/bin/check.sh" "$d_route" 2>/dev/null; then
 	exit 1
 fi
 echo "  refused a Gateway API object outside addons"
+echo "== check does not skip a directory that only starts with addons =="
+d_prefix=$work/addons-prefix
+cp -R "$here/testdata/fixture/manifests" "$d_prefix"
+mkdir -p "$d_prefix/production/addons-x"
+printf '%s\n' "$route" > "$d_prefix/production/addons-x/route.yaml"
+if "$here/bin/check.sh" "$d_prefix" 2>/dev/null; then
+	echo "SELFTEST FAIL: check skipped a directory named addons-x" >&2
+	exit 1
+fi
+echo "  refused a Gateway API object under addons-x"
 echo "== check does not skip a directory it is given as the argument =="
 if "$here/bin/check.sh" "$d_addons/production/addons" >/dev/null 2>&1; then
 	echo "SELFTEST FAIL: check skipped the addons directory it was asked to check" >&2
