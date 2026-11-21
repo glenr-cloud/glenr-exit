@@ -234,21 +234,79 @@
 # provisioner with no `class` matches every class (score-k8s Match skips the
 # class test when the provisioner names none, measured on the version pinned by
 # scripts/checks/fetch-score-k8s.sh).
+#
+# `{type: volume, class: persistent, params: {size}}` is a PersistentVolumeClaim
+# (design/146 section S3), the claim the platform's exit dialect renders: named
+# `<workload>-vol-<resource>`, ReadWriteOnce, `params.size` 1Gi to 50Gi (default
+# 1Gi), and no `storageClassName`, so a plain cluster uses its default class.
+# The volume source is `persistentVolumeClaim.claimName`. The claim is created
+# empty: volume contents are not in an export. The provisioner sets nothing on
+# the pod: write `strategy: Recreate` and one replica yourself (a ReadWriteOnce
+# claim does not follow a rolling update to another node), and set a pod
+# `fsGroup` if the image runs as a non-root user. It also cannot see which
+# containers mount a claim, so a persistent volume that nothing mounts still
+# creates a claim (the platform refuses it). The claim is named after the
+# workload as score-k8s names it and after the resource key, so a resource that
+# sets `id:` is refused.
 - uri: template://glenr/volume
   type: volume
-  description: Scratch emptyDir with the platform's sizeLimit (default 1Gi).
+  description: Scratch emptyDir with the platform's sizeLimit (default 1Gi), or a PersistentVolumeClaim (class persistent, 1Gi to 50Gi).
   init: |
-    {{ if ne .Class "ephemeral" }}{{ fail (printf "resources.%s: a volume needs class: ephemeral; persistent volumes are not available yet" .Id) }}{{ end }}
+    {{ if and (ne .Class "ephemeral") (ne .Class "persistent") }}{{ fail (printf "resources.%s: a volume needs class: ephemeral or class: persistent" .Id) }}{{ end }}
+    {{ if eq .Class "ephemeral" }}
     {{ if .Params.size }}{{ if not (regexMatch "^[1-9][0-9]*(Mi|Gi)$" (print .Params.size)) }}{{ fail (printf "resources.%s: params.size %v is not a size this platform accepts. Write a whole number of Mi or Gi, for example 2Gi." .Id .Params.size) }}{{ end }}{{ end }}
     {{ if .Params.medium }}{{ fail (printf "resources.%s: params.medium is not supported: a scratch volume is disk-backed. Remove medium." .Id) }}{{ end }}
+    {{ else }}
+    {{ $res := trimPrefix (printf "%s." .SourceWorkload) .Id }}
+    {{ if not (hasPrefix (printf "%s." .SourceWorkload) .Id) }}{{ fail (printf "resources.%s: a persistent volume may not set id: the claim is named after the workload and the resource name" .Id) }}{{ end }}
+    {{ $size := print (default "1Gi" .Params.size) }}
+    {{ if not (regexMatch "^[1-9][0-9]*Gi$" $size) }}{{ fail (printf "resources.%s.params.size is %q; a persistent volume's size is a whole number of Gi, from 1Gi to 50Gi." $res $size) }}{{ end }}
+    {{ if or (lt (atoi (trimSuffix "Gi" $size)) 1) (gt (atoi (trimSuffix "Gi" $size)) 50) }}{{ fail (printf "resources.%s.params.size is %q; a persistent volume is 1Gi to 50Gi." $res $size) }}{{ end }}
+    {{ if .Params.medium }}{{ fail (printf "resources.%s.params.medium applies to a scratch volume; remove it from a persistent volume." $res) }}{{ end }}
+    {{ $vol := trimAll "-" (regexReplaceAll "[^a-z0-9-]" (lower $res) "-") }}
+    {{ if regexMatch "^[0-9]" $vol }}{{ $vol = print "app-" $vol }}{{ end }}
+    {{ $claim := printf "%s-vol-%s" .SourceWorkload $vol }}
+    {{ if gt (len $claim) 63 }}{{ fail (printf "resources.%s: the claim name %s is %d characters; the limit is 63. Shorten the workload name or the resource name." $res $claim (len $claim)) }}{{ end }}
+    claim: {{ $claim | quote }}
+    {{ end }}
   outputs: |
+    {{ if eq .Class "persistent" }}
+    source:
+      persistentVolumeClaim:
+        claimName: {{ .Init.claim | quote }}
+    {{ else }}
     source:
       emptyDir:
         sizeLimit: {{ default "1Gi" .Params.size | quote }}
+    {{ end }}
   expected_outputs:
     - source
   supported_params:
     - size
+  manifests: |
+    {{ if eq .Class "persistent" }}
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: {{ .Init.claim | quote }}
+        {{ if ne .Namespace "" }}
+        namespace: {{ .Namespace }}
+        {{ end }}
+        annotations:
+          k8s.score.dev/source-workload: {{ .SourceWorkload }}
+          k8s.score.dev/resource-uid: {{ .Uid }}
+          k8s.score.dev/resource-guid: {{ .Guid }}
+        labels:
+          app.kubernetes.io/managed-by: score-k8s
+          app.kubernetes.io/name: {{ .Init.claim | quote }}
+          app.kubernetes.io/instance: {{ .Init.claim | quote }}
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: {{ default "1Gi" .Params.size | print | quote }}
+    {{ end }}
 
 # --- secret ------------------------------------------------------------------
 # `{type: secret, params: {name}}` names a Secret you create. The only output is
