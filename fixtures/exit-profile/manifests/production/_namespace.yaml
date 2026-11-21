@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: exit-fixture-production
+  labels:
+    app.kubernetes.io/part-of: exit-fixture
+    app.kubernetes.io/instance: production
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: glenr-defaults
+  namespace: exit-fixture-production
+spec:
+  limits:
+  - type: Container
+    defaultRequest:
+      cpu: "500m"
+      memory: "512Mi"
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: glenr-pods
+  namespace: exit-fixture-production
+spec:
+  hard:
+    pods: "12"
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: exit-fixture-production
+  labels:
+    app.kubernetes.io/part-of: exit-fixture
+    app.kubernetes.io/instance: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress

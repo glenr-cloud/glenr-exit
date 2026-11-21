@@ -197,10 +197,19 @@ the run-as-exported route.
 
 ## Continuous integration
 
-`.github/workflows/exit.yml` runs `bin/selftest.sh` on every push: it builds a
-signed export from `testdata/fixture` with a throwaway key and proves
-`verify.sh` and `check.sh` accept a good export and refuse each bad case.
-Cluster runs on `kind` are not part of CI yet.
+`.github/workflows/exit.yml` runs on GitHub-hosted runners on every push and
+pull request:
+
+| Job | What it runs |
+|---|---|
+| `selftest` | `bin/selftest.sh`: builds a signed export from `testdata/fixture` with a throwaway key and proves `verify.sh` and `check.sh` accept a good export and refuse each bad case |
+| `t1` | on `kind` (Kubernetes 1.35) with Traefik as the default Ingress class: steps 1, 3, 4, 5 and 7 against the export in `fixtures/exit-profile/`; every `Deployment` becomes available and the `tick` CronJob's Job completes |
+| `t1b` | on `kind` with the Gateway API CRDs, Traefik's Gateway provider with a Gateway named `default`, and the CloudNativePG operator, each from its upstream release: the score-k8s route, then the restore of `fixtures/data/maindb.dump` with `pg_restore` (step 6), then a check that `web` reads its mounted files and variables and answers through the Gateway |
+
+Each cluster job lists its README commands, fails when one is missing from this
+file, and runs the same strings. The export is signed in the job with a key it
+generates, so the jobs verify with `bin/verify.sh ./export <public-key>`.
+`fixtures/README.md` states what the fixture is and what it does not cover.
 
 ## Verify a release
 

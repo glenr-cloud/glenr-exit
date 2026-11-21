@@ -1,0 +1,12 @@
+# Size and variables of web in staging (Glenr export v1.4).
+containers:
+  main:
+    resources:
+      limits:
+        cpu: 250m
+        memory: 256Mi
+      requests:
+        cpu: 250m
+        memory: 256Mi
+    variables:
+      LOG_LEVEL: debug
