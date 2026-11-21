@@ -233,7 +233,9 @@ kubectl apply -f manifests.yaml
 A secret file (a `files` entry whose content is `${resources.<s>.<KEY>}`) is
 mounted from the Secret named in the `secret` resource's `params.name`, in the
 directory of its target path, next to any plain file there. Its value is in no
-ConfigMap. Create that Secret from `secrets/<env>.example.yaml` (step 5) before
+ConfigMap. The `files` entry's content must be exactly that placeholder, and
+`params.keys` of the resource lists every `<KEY>` the app's files read; score-k8s
+refuses a key that is not listed. Create that Secret from `secrets/<env>.example.yaml` (step 5) before
 you apply `manifests.yaml`.
 
 ## Suffixes, variables and scale

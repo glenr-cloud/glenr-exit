@@ -295,7 +295,10 @@ jobs:
           # secret file in the plain file's directory, from the filled example
           [ "$(ex cat /etc/web/token)" = fixture-token ]
           # the secret value is in no ConfigMap of the namespace
-          if kubectl -n "$NS" get configmap -o yaml | grep -q fixture-token; then echo "a ConfigMap holds the secret value"; exit 1; fi
+          cms=$(kubectl -n "$NS" get configmap -o json)
+          for needle in fixture-token "$(printf fixture-token | base64 -w0)"; do
+            if grep -qF -- "$needle" <<<"$cms"; then echo "a ConfigMap holds the secret value ($needle)"; exit 1; fi
+          done
           # variable from overrides/staging/web.score.yaml
           [ "$(ex printenv LOG_LEVEL)" = debug ]
           # database password: the variable equals the credential Secret's value
