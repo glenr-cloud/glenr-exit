@@ -37,12 +37,12 @@ reproduce.
 
 The first CI runs of this fixture (GLE-3154) found three places where `kind`
 needs a step the README did not state. The README now states them (GLE-3314),
-and the jobs run the README's commands as written; neither job edits the
-fixture or adds a step of its own.
+and the jobs run the README's commands as written; neither job has a
+workaround step of its own.
 
 | # | Finding | README block the job runs |
 |---|---|---|
-| F-1 | The exit profile writes `hostUsers: false` into pod specs. On `kind` a pod sandbox fails with `error mounting "sysfs" ... operation not permitted`. | `t1`: step 7, "A cluster without user namespaces": the `find ... yq` command removes the field before the apply. The committed fixture keeps it. |
+| F-1 | The exit profile writes `hostUsers: false` into pod specs. On `kind` a pod sandbox fails with `error mounting "sysfs" ... operation not permitted`. | `t1`: the `find ... yq` command in step 7 removes the field before the apply. The committed fixture keeps it. |
 | F-2 | `_namespace.yaml` sets Pod Security `restricted`. With the field removed the pods in `manifests/` fail `runAsNonRoot != true`; the Deployments `score-k8s` renders have no `securityContext`. | `t1`: the `kubectl label ... baseline` command after the apply (the apply resets the label). `t1b`: the same command after step 4. |
 | F-3 | `_namespace.yaml` creates a default-deny ingress NetworkPolicy and `kind`'s CNI enforces it. The CloudNativePG operator cannot reach its instance (`Instance Status Extraction Error: HTTP communication issue`) and Traefik cannot reach `web`. The `manifests/` route has `web-from-ingress`; the score-k8s route has no policy. | `t1b`: `kubectl -n <namespace> apply -f examples/score-k8s-allow-ingress.yaml` |
 
@@ -53,4 +53,4 @@ fixture or adds a step of its own.
 | README step 2 (`images.sh copy` and `rewrite` against a registry) | `bin/selftest.sh` covers `rewrite`; `copy` has no job |
 | The Ingress object in `manifests/` | no job sends a request through it |
 | `GET /exit-check`, the row counts of the cell's own database | design/145 gate check 6 on T2 |
-| `hostUsers: false` taking effect (user namespaces on the nodes) | no job: `kind` has none, so `t1` removes the field. Design/145 gate check 6 runs it on a k3s cluster (T2) |
+| `hostUsers: false` taking effect (user namespaces on the nodes) | no job: `kind` has none, so `t1` removes the field. Design/145 gate check 6 exercises it on a k3s cluster (T2) |

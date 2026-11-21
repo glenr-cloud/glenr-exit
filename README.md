@@ -40,7 +40,7 @@ export.
 
 | Need | Why | If your cluster lacks it |
 |---|---|---|
-| User namespaces on the nodes (Linux kernel and container runtime support; the kubelet honours `hostUsers: false`) | The exit profile writes `hostUsers: false` into every pod spec of `manifests/`. That field is what lets the pods pass the namespace's Pod Security level `restricted` (`_namespace.yaml` sets `enforce: restricted`) without a `runAsNonRoot` setting. Glenr's test cluster (k3s v1.35 on one server, 2026-11-20) met it. | The cluster refuses the pods (on `kind`: `error mounting "sysfs" ... operation not permitted`). Removing the field alone makes `restricted` refuse them (`runAsNonRoot != true`). Use the commands in step 7, "A cluster without user namespaces": remove the field and set the namespace's level to `baseline`. |
+| User namespaces on the nodes (the kubelet honours `hostUsers: false`) | The exit profile writes `hostUsers: false` into every pod spec of `manifests/`. That field is what lets the pods pass the namespace's Pod Security level `restricted` (`_namespace.yaml` sets `enforce: restricted`) without a `runAsNonRoot` setting. Glenr's test cluster (k3s v1.35 on one server, 2026-11-20) met it. | The cluster refuses the pods (on `kind`: `error mounting "sysfs" ... operation not permitted`). Removing the field alone makes `restricted` refuse them (`runAsNonRoot != true`). Use the two commands in step 7 for a cluster without user namespaces: remove the field and set the namespace's level to `baseline`. |
 | Pod Security level `baseline` for the second route | score-k8s writes no `securityContext`, so `restricted` refuses its Deployments. | Step "The second route" sets the level after step 4. |
 
 ## Steps
@@ -140,26 +140,28 @@ before you apply the workloads.
 
 ### 7. Apply
 
+A cluster without user namespaces (see "Cluster requirements") needs two
+commands around the apply: the first before it, the second after it.
+
+Before the apply, on a cluster without user namespaces: remove `hostUsers` from
+the manifests. This edits files of the export, so run it after step 1:
+
+```sh
+find ./export/manifests/production -name '*.yaml' -exec yq -i 'del(.spec.template.spec.hostUsers) | del(.spec.jobTemplate.spec.template.spec.hostUsers)' {} \;
+```
+
+The apply, on every cluster:
+
 ```sh
 kubectl apply -f ./export/manifests/production/
 ```
 
 This applies `_namespace.yaml` again (no change) and every app's objects.
 
-#### A cluster without user namespaces
-
-Do this only when your nodes lack user-namespace support (see "Cluster
-requirements"). Remove `hostUsers` from the manifests before you run the apply
-above. This edits files of the export, so run it after step 1:
-
-```sh
-find ./export/manifests/production -name '*.yaml' -exec yq -i 'del(.spec.template.spec.hostUsers) | del(.spec.jobTemplate.spec.template.spec.hostUsers)' {} \;
-```
-
-After the apply, set the namespace's Pod Security level to `baseline`. Run it
-after the apply: the apply restores the `restricted` label that
-`_namespace.yaml` carries. The ReplicaSet and Job controllers retry the pods the
-namespace refused in the meantime.
+After the apply, on a cluster without user namespaces: set the namespace's Pod
+Security level to `baseline`. Run it after the apply, because the apply restores
+the `restricted` label that `_namespace.yaml` carries. The ReplicaSet and Job
+controllers retry the pods the namespace refused in the meantime.
 
 ```sh
 kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=baseline --overwrite

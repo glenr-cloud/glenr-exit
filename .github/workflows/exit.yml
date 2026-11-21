@@ -90,7 +90,7 @@ jobs:
       # "A cluster without user namespaces" commands as written: the field is
       # removed after step 1 and before the apply, and the label goes on after
       # the apply, which resets it (F-2).
-      - name: README steps 1, 3, 4, 5 and 7, with "A cluster without user namespaces" (P-1)
+      - name: README steps 1, 3, 4, 5 and 7, with its commands for a cluster without user namespaces (P-1)
         run: |
           set -euo pipefail
           pub="$RUNNER_TEMP/keys/pub.pem"
@@ -104,13 +104,16 @@ jobs:
             'kubectl apply -f ./export/manifests/production/'
             'kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=baseline --overwrite'
           )
-          for c in "${cmds[@]}"; do
-            grep -qxF -- "$c" README.md || grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
+          for c in "${cmds[@]:0:5}"; do
+            grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
           done
-          # `kubectl apply -f ./export/manifests/production/` is also a prefix of
-          # step 4's command: require step 7's line on its own.
-          grep -qxF -- "${cmds[6]}" README.md || { echo "README.md has no line holding only: ${cmds[6]}"; exit 1; }
-          grep -qxF -- "${cmds[7]}" README.md || { echo "README.md has no line holding only: ${cmds[7]}"; exit 1; }
+          # The three commands of step 7 sit in the README's step 7 section, each
+          # on a line of its own (`kubectl apply -f ./export/manifests/production/`
+          # is also a prefix of step 4's command).
+          s7=$(awk '/^### 7\. Apply/{f=1;next} /^### 8\./{f=0} f' README.md)
+          for i in 5 6 7; do
+            printf '%s\n' "$s7" | grep -qxF -- "${cmds[$i]}" || { echo "README step 7 has no line holding only: ${cmds[$i]}"; exit 1; }
+          done
           # The default key is the deployed one: an export signed with the
           # generated key must be refused under it.
           if out=$(bin/verify.sh ./export 2>&1); then echo "verify.sh accepted a test-signed export under the deployed key"; exit 1; fi
@@ -209,8 +212,10 @@ jobs:
             'kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=baseline --overwrite'
             'kubectl -n <namespace> apply -f examples/score-k8s-allow-ingress.yaml'
           )
+          # Both commands sit in the README section on the second route.
+          sec=$(awk '/^## The second route/{f=1;next} /^## Suffixes/{f=0} f' README.md)
           for c in "${cmds[@]}"; do
-            grep -qxF -- "$c" README.md || { echo "README.md has no line holding only: $c"; exit 1; }
+            printf '%s\n' "$sec" | grep -qxF -- "$c" || { echo "README second-route section has no line holding only: $c"; exit 1; }
             c=${c//<namespace>/$NS}
             echo "+ $c"; eval "$c"
           done
