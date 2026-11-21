@@ -119,6 +119,9 @@ cp ./export/secrets/production.example.yaml ./export/secrets/production.yaml
 kubectl apply -f ./export/secrets/production.yaml
 ```
 
+The filled file holds your secret values. Keep it out of version control and
+delete it after `kubectl apply`.
+
 ### 6. Restore the database
 
 The export does not carry a database object: you supply a PostgreSQL of the
@@ -149,17 +152,23 @@ into them.
 ## The second route: re-render with score-k8s
 
 Instead of applying the rendered `manifests/`, you can render again from the
-Score documents with `score-k8s`. The export's `glenr.provisioners.yaml` is the
-same file as the one at the root of this repository; `bin/release.sh` refuses
-to release when they differ.
+Score documents with `score-k8s`. The export's `glenr.provisioners.yaml` comes
+from the same operator file as the one at the root of this repository;
+`bin/release.sh` refuses to release when this repository's copy differs from
+the operator's.
 
 ```sh
 cd ./export
-score-k8s init --no-sample
-cp glenr.provisioners.yaml .score-k8s/
-score-k8s generate -n production -o manifests.yaml \
-  score-k8s/web.yaml overrides/production/web.score.yaml
+mkdir -p .score-k8s && cp glenr.provisioners.yaml .score-k8s/
+score-k8s init --no-sample --patch-templates overrides/production/score-k8s-patch.tpl
+score-k8s generate score-k8s/web.yaml \
+  --overrides-file overrides/production/web.score.yaml \
+  --namespace <namespace> -o manifests.yaml
 ```
+
+Run `score-k8s generate` once per app in `score-k8s/`, each with its own
+`--overrides-file`. `overrides/README.md` in the export lists the command for
+every app.
 
 Keep plain files and secret files in separate directories. score-k8s mounts
 the ConfigMap that holds a container's plain files over the whole target
