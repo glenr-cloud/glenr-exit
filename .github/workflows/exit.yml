@@ -120,6 +120,11 @@ jobs:
           run "${cmds[0]}"
           run "${cmds[1]}"
           run "${cmds[2]}"
+          # Finding F-2 (GLE-3154): the pods in `manifests/` set no runAsNonRoot,
+          # so the namespace's Pod Security `restricted` label refuses them
+          # (`runAsNonRoot != true`). Set the label to `baseline`.
+          ns=$(yq 'select(.kind == "Namespace") | .metadata.name' ./export/manifests/production/_namespace.yaml)
+          kubectl label namespace "$ns" pod-security.kubernetes.io/enforce=baseline --overwrite
           run "${cmds[3]}"
           # README step 5: "fill the values".
           yq -i '.stringData |= with_entries(.value = "fixture-" + .key)' ./export/secrets/production.yaml
@@ -191,7 +196,8 @@ jobs:
       # Findings F-2 and F-3 (GLE-3154). Step 4 creates the namespace from
       # `_namespace.yaml`: Pod Security `restricted` and a default-deny ingress
       # NetworkPolicy. kind's CNI enforces NetworkPolicy. With both in place:
-      #   F-2  the Deployments score-k8s renders are refused (no securityContext);
+      #   F-2  the Deployments score-k8s renders are refused (no securityContext,
+      #        no runAsNonRoot);
       #   F-3  no pod in the namespace accepts ingress, so the CloudNativePG
       #        operator gets "Instance Status Extraction Error: HTTP communication
       #        issue" and the Cluster never becomes Ready, and Traefik cannot
