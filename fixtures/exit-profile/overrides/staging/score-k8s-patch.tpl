@@ -5,7 +5,7 @@
 {{ if eq $m.metadata.name "web" }}
 - op: set
   path: {{ $i }}.spec.replicas
-  value: 1
+  value: 2
   description: replicas of web, from values/staging.yaml
 {{ end }}
 {{ end }}

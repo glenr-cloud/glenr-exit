@@ -5,8 +5,9 @@
 # export in fixtures/exit-profile/ (see fixtures/README.md), signed in the job
 # with a generated key (bin/make-test-export.sh).
 #
-# Each cluster job holds its README commands in one list, checks that every
-# command is a substring of README.md, and runs the same strings. A README
+# Each cluster job holds its README commands in lists, checks that every
+# command appears in README.md, and runs those strings (t1b substitutes
+# `staging` for `production` and the namespace for `<namespace>`). A README
 # edit that changes a command fails the job until the list follows it.
 #
 # The `selftest` job builds a signed export from testdata/fixture with a
@@ -48,7 +49,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install yq
         run: |
-          curl -sSL -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          curl -fsSL --retry 3 -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           chmod +x /tmp/yq
           sudo mv /tmp/yq /usr/local/bin/yq
           yq --version
@@ -75,7 +76,7 @@ jobs:
             --set providers.kubernetesIngress.publishedService.enabled=true
       - name: Install yq
         run: |
-          curl -sSL -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          curl -fsSL --retry 3 -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           chmod +x /tmp/yq && sudo mv /tmp/yq /usr/local/bin/yq
       - name: Provisioners file equals the repository's
         run: cmp glenr.provisioners.yaml fixtures/exit-profile/glenr.provisioners.yaml
@@ -87,7 +88,8 @@ jobs:
       # every pod spec. On kind (containers inside a container) the pod sandbox
       # fails with `error mounting "sysfs" ... operation not permitted`, so no
       # pod starts. T1 removes the field from its copy of the fixture before it
-      # signs it; the committed fixture keeps it. T2 (k3s on a server) runs it.
+      # signs it; the committed fixture keeps it. Assumed, not measured: T2 (k3s on a
+      # server) is where the field runs.
       - name: Prepare a kind copy of the fixture (no hostUsers)
         run: |
           set -euo pipefail
@@ -95,10 +97,10 @@ jobs:
           for f in web tick; do
             yq -i 'del(.spec.template.spec.hostUsers) | del(.spec.jobTemplate.spec.template.spec.hostUsers)' "$RUNNER_TEMP/fixture/manifests/production/$f.yaml"
           done
-          ! grep -rq hostUsers "$RUNNER_TEMP/fixture/manifests"
+          if grep -rq hostUsers "$RUNNER_TEMP/fixture/manifests"; then echo "hostUsers is still in the kind copy"; exit 1; fi
       - name: Sign the fixture
         run: bin/make-test-export.sh "$RUNNER_TEMP/fixture" export "$RUNNER_TEMP/keys"
-      - name: README steps 1 to 5 and 7 (P-1)
+      - name: README steps 1, 3, 4, 5 and 7 (P-1)
         run: |
           set -euo pipefail
           pub="$RUNNER_TEMP/keys/pub.pem"
@@ -113,9 +115,13 @@ jobs:
           for c in "${cmds[@]}"; do
             grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
           done
+          # `kubectl apply -f ./export/manifests/production/` is also a prefix of
+          # step 4's command: require step 7's line on its own.
+          grep -qxF -- "${cmds[5]}" README.md || { echo "README.md has no line holding only: ${cmds[5]}"; exit 1; }
           # The default key is the deployed one: an export signed with the
           # generated key must be refused under it.
-          if bin/verify.sh ./export 2>/dev/null; then echo "verify.sh accepted a test-signed export under the deployed key"; exit 1; fi
+          if out=$(bin/verify.sh ./export 2>&1); then echo "verify.sh accepted a test-signed export under the deployed key"; exit 1; fi
+          echo "$out" | grep -q 'does not verify' || { echo "verify.sh refused for another reason: $out"; exit 1; }
           run() { echo "+ $1"; eval "${1//<public-key>/$pub}"; }
           run "${cmds[0]}"
           run "${cmds[1]}"
@@ -136,8 +142,14 @@ jobs:
         run: |
           set -euo pipefail
           ns=$(yq 'select(.kind == "Namespace") | .metadata.name' export/manifests/production/_namespace.yaml)
-          for d in $(kubectl -n "$ns" get deploy -o name); do
-            kubectl -n "$ns" rollout status "$d" --timeout=10m
+          # README step 8, as written, for each Deployment the export holds.
+          c='kubectl -n <namespace> rollout status deploy/<app> --timeout=10m'
+          grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
+          apps=$(kubectl -n "$ns" get deploy -o jsonpath='{.items[*].metadata.name}')
+          [ -n "$apps" ] || { echo "no Deployment in $ns"; exit 1; }
+          for app in $apps; do
+            cmd=${c//<namespace>/$ns}; cmd=${cmd//<app>/$app}
+            echo "+ $cmd"; eval "$cmd"
           done
           kubectl -n "$ns" create job tick-manual --from=cronjob/tick
           kubectl -n "$ns" wait --for=condition=complete job/tick-manual --timeout=5m
@@ -162,7 +174,7 @@ jobs:
       - name: Install yq and score-k8s
         run: |
           set -euo pipefail
-          curl -sSL -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          curl -fsSL --retry 3 -o /tmp/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           chmod +x /tmp/yq && sudo mv /tmp/yq /usr/local/bin/yq
           archive=/tmp/score-k8s.tar.gz
           curl -fsSL --retry 3 -o "$archive" \
@@ -204,8 +216,8 @@ jobs:
       #        operator gets "Instance Status Extraction Error: HTTP communication
       #        issue" and the Cluster never becomes Ready, and Traefik cannot
       #        reach `web` through the Gateway.
-      # This step is what a customer has to add for the route; the README does not
-      # say so yet. It sets the label to `baseline` and allows ingress from the
+      # This step is what a customer adds for the route; the README states neither
+      # change yet. It sets the label to `baseline` and allows ingress from the
       # operator, the ingress controller and the namespace itself.
       - name: Route prerequisites the README does not state (F-2, F-3)
         run: |
@@ -253,22 +265,31 @@ jobs:
           echo "+ score-k8s generate ... (README lines joined)"
           eval "score-k8s ${cmd#score-k8s }"
           # The route emits a Gateway API HTTPRoute and a CloudNativePG Cluster.
-          grep -q 'kind: HTTPRoute' manifests.yaml
-          grep -q 'kind: Cluster' manifests.yaml
-      - name: Fill the secrets and apply (README steps 5 and 7, route form)
+          grep -qE '^kind: HTTPRoute$' manifests.yaml
+          grep -qE '^kind: Cluster$' manifests.yaml
+      - name: Fill the secrets and apply the rendered objects (README step 5 and the route's apply)
         run: |
           set -euo pipefail
-          cd export
-          for c in 'cp ./export/secrets/production.example.yaml ./export/secrets/production.yaml' 'kubectl apply -f ./export/secrets/production.yaml'; do
-            grep -qF -- "$c" ../README.md || { echo "README.md no longer contains: $c"; exit 1; }
+          cmds=(
+            'cp ./export/secrets/production.example.yaml ./export/secrets/production.yaml'
+            'kubectl apply -f ./export/secrets/production.yaml'
+          )
+          for c in "${cmds[@]}"; do
+            grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
           done
-          cp secrets/production.example.yaml secrets/production.yaml
-          yq -i '.stringData |= with_entries(.value = "fixture-" + .key)' secrets/production.yaml
-          kubectl apply -f secrets/production.yaml
-          kubectl apply -f manifests.yaml
+          a='kubectl apply -f manifests.yaml'
+          grep -qxF -- "$a" README.md || { echo "README.md has no line holding only: $a"; exit 1; }
+          eval "${cmds[0]}"
+          yq -i '.stringData |= with_entries(.value = "fixture-" + .key)' ./export/secrets/production.yaml
+          eval "${cmds[1]}"
+          # The route's apply runs in ./export, where README step "cd ./export" left it.
+          (cd export && eval "$a")
       - name: Restore the fixture dump (README step 6) and count rows
         run: |
           set -euo pipefail
+          # README step 6 restores before the apply, into a database the customer
+          # already runs. The route creates its database in the apply, so the
+          # restore follows the apply here.
           kubectl -n "$NS" wait --for=condition=Ready cluster --all --timeout=10m
           cluster=$(kubectl -n "$NS" get cluster -o jsonpath='{.items[0].metadata.name}')
           pod=$(kubectl -n "$NS" get pod -l "cnpg.io/cluster=$cluster,cnpg.io/instanceRole=primary" -o jsonpath='{.items[0].metadata.name}')
@@ -277,15 +298,19 @@ jobs:
           kubectl -n "$NS" exec -i "$pod" -c postgres -- \
             pg_restore --no-owner --no-acl --role=app -d app < fixtures/data/maindb.dump
           want=$(awk '$1 == "items" {print $2}' fixtures/data/row-counts.txt)
+          [ -n "$want" ] || { echo "no items count in fixtures/data/row-counts.txt"; exit 1; }
           got=$(kubectl -n "$NS" exec "$pod" -c postgres -- psql -d app -tAc 'select count(*) from items')
           echo "items: restored $got, recorded $want"
           [ "$got" = "$want" ]
-      - name: P-3 and P-7, and web through the default Gateway
+      - name: Step 8, P-3 and P-7, and web through the default Gateway
         run: |
           set -euo pipefail
-          kubectl -n "$NS" rollout status deploy/web --timeout=10m
-          # staging override: one replica
-          [ "$(kubectl -n "$NS" get deploy web -o jsonpath='{.spec.replicas}')" = 1 ]
+          c='kubectl -n <namespace> rollout status deploy/<app> --timeout=10m'
+          grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
+          cmd=${c//<namespace>/$NS}; cmd=${cmd//<app>/web}
+          echo "+ $cmd"; eval "$cmd"
+          # staging patch template: 2 replicas (score-k8s alone renders no count, which the API server defaults to 1)
+          [ "$(kubectl -n "$NS" get deploy web -o jsonpath='{.spec.replicas}')" = 2 ]
           ex() { kubectl -n "$NS" exec deploy/web -- "$@"; }
           # plain file
           [ "$(ex sha256sum /etc/web/config.yaml | cut -d' ' -f1)" = "$(printf 'listen = 8080\n' | sha256sum | cut -d' ' -f1)" ]
@@ -295,7 +320,9 @@ jobs:
           [ "$(ex printenv LOG_LEVEL)" = debug ]
           # database password: the variable equals the credential Secret's value
           cred=$(kubectl -n "$NS" get cluster -o jsonpath='{.items[0].spec.bootstrap.initdb.secret.name}')
-          [ "$(ex printenv MAINDB_PASSWORD)" = "$(kubectl -n "$NS" get secret "$cred" -o jsonpath='{.data.password}' | base64 -d)" ]
+          [ -n "$cred" ]
+          pw=$(kubectl -n "$NS" get secret "$cred" -o jsonpath='{.data.password}' | base64 -d)
+          [ -n "$pw" ] && [ "$(ex printenv MAINDB_PASSWORD)" = "$pw" ]
           # scratch volume accepts a write
           [ "$(ex sh -c 'echo probe > /tmp/work/probe && cat /tmp/work/probe')" = probe ]
           # reached through the default Gateway
