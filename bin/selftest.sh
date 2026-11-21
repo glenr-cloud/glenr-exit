@@ -5,7 +5,7 @@
 # proves each one refuses the case it exists to catch.
 #
 # This is the part of gate check 7 that needs no cluster. The kind apply (P-1,
-# P-3) runs in the workflow once the EXIT-PROFILE fixture is in place.
+# P-3) runs in the workflow's t1 job, on fixtures/exit-profile.
 #
 # Requires: openssl (3), coreutils, jq and yq (mikefarah v4).
 set -euo pipefail

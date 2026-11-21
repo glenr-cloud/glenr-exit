@@ -1,0 +1,272 @@
+# glenr.provisioners.yaml — score-k8s provisioners for the Glenr resource types.
+#
+# Status: EXPORT-ONLY (design/129 P-1, D-PORT.3; design/22 rule 8 as amended
+# 2026-11-03). The Glenr platform renders with the operator's `render` package,
+# never with this file. This file describes what that renderer serves, for a
+# customer who runs the same Score document with `score-k8s` on a cluster of
+# their own. It is tested against the platform render by behaviour parity
+# (`render/provisioners_parity_test.go`, CI job `provisioner-parity`).
+#
+# File: the export copy of glenr.provisioners.yaml, byte for byte the file in
+# github.com/glenr-cloud/glenr-exit. Licence: Apache-2.0 (LICENSE in that repository).
+#
+# Use: `score-k8s init`, then copy this file into `.score-k8s/`. The file name
+# sorts before `zz-default.provisioners.yaml`, and score-k8s takes the first
+# provisioner that matches a resource, so a type that also has a score-k8s default
+# replaces it (`volume` overrides the default `volume` provisioner to add a
+# `sizeLimit`; `external-api` and `secret` have no default).
+#
+# What this file does NOT serve is listed per type, with the reason, in
+# `provisionerDivergences` in render/provisioners_parity_test.go and in the
+# summary of the CI job `provisioner-parity`. The test fails when that list and
+# the behaviour disagree.
+#
+# DATABASES: Glenr stores a database connection as `type: service` with
+# `params.kind: postgres`; this file serves `type: postgres` and refuses the
+# stored form. The cell export (E-1) rewrites each connection to
+# `{type: postgres, id: <db>}` and leaves the database app's own document out of
+# the score-k8s set. Without that rewrite an exported cell with a database does
+# not run with this file.
+#
+# SECRETS: a `secret` resource (design/142 D-142.3) is served as a mounted
+# Secret volume, never as a file. score-k8s renders every workload `files` entry
+# into a ConfigMap (measured 2026-11-20, score-k8s 0.22.0: a file whose content
+# is a secret placeholder puts the value in the ConfigMap's binaryData), which
+# is the ConfigMap leak D-142.3 condition 1 forbids. So the `secret` provisioner
+# below returns only a volume `source` that names a Secret, and the exported
+# `score-k8s/<app>.yaml` mounts it as a `volumes` entry
+# (`{source: ${resources.<s>}, path: <KEY>, target: <file>, readOnly: true}`,
+# F-145-1, written by EXPORT-K7). The provisioner creates no Secret object and
+# holds no value. You create the Secret named in `params.name` from the filled
+# `secrets/<env>.example.yaml`, as on the `manifests/` route. A `files` entry
+# that reads a secret placeholder is refused.
+
+# --- route -------------------------------------------------------------------
+# The platform serves every public app on a composed hostname and an HTTPRoute.
+# score-k8s knows neither the zone nor the organisation, so the host is
+# `<app>.localhost`. Change it by editing `state.host` below. `parentRefs` names a
+# Gateway called `default` in the route's namespace; edit it to your Gateway.
+- uri: template://glenr/route
+  type: route
+  description: Platform route stand-in. url is http://<app>.localhost; one HTTPRoute to the workload's Service.
+  init: |
+    {{ $ports := (index .WorkloadServices .SourceWorkload).Ports }}
+    {{ if not $ports }}{{ fail "a route resource serves the workload's Service, so the workload must declare service.ports" }}{{ end }}
+  state: |
+    routeName: route-{{ .SourceWorkload }}-{{ substr 0 8 .Guid | lower }}
+    host: {{ .SourceWorkload }}.localhost
+  outputs: |
+    url: http://{{ .State.host }}
+  expected_outputs:
+    - url
+  manifests: |
+    {{ $svc := (index .WorkloadServices .SourceWorkload) }}
+    {{ $port := "" }}
+    {{ range $name, $p := $svc.Ports }}{{ if eq (print $port) "" }}{{ $port = $p.Port }}{{ end }}{{ end }}
+    - apiVersion: gateway.networking.k8s.io/v1
+      kind: HTTPRoute
+      metadata:
+        name: {{ .State.routeName }}
+        {{ if ne .Namespace "" }}
+        namespace: {{ .Namespace }}
+        {{ end }}
+        annotations:
+          k8s.score.dev/source-workload: {{ .SourceWorkload }}
+          k8s.score.dev/resource-uid: {{ .Uid }}
+          k8s.score.dev/resource-guid: {{ .Guid }}
+        labels:
+          app.kubernetes.io/managed-by: score-k8s
+          app.kubernetes.io/name: {{ .State.routeName }}
+          app.kubernetes.io/instance: {{ .State.routeName }}
+      spec:
+        parentRefs:
+        - name: default
+        hostnames:
+        - {{ .State.host | quote }}
+        rules:
+        - matches:
+          - path:
+              type: PathPrefix
+              value: /
+          backendRefs:
+          - name: {{ $svc.ServiceName }}
+            port: {{ $port }}
+
+# --- service -----------------------------------------------------------------
+# `{type: service, params: {app: <name>}}` resolves to the Service of another
+# app in the same environment. Here the target must be a workload of the same
+# `score-k8s generate` call; pass its Score file too.
+- uri: template://glenr/service
+  type: service
+  description: Host and port of another app in the same generate run.
+  init: |
+    {{ if not .Params.app }}{{ fail "a service resource needs params.app: the name of another app in this environment, e.g. `api: {type: service, params: {app: api}}`" }}{{ end }}
+    {{ if eq (default "" .Params.kind) "postgres" }}{{ fail "params.kind: postgres is served by a resource of type postgres in this export, not by a service reference" }}{{ end }}
+    {{ $w := index .WorkloadServices .Params.app }}
+    {{ if or (not $w) (not $w.ServiceName) }}{{ fail (printf "service %q: no app named %q in this generate run. Pass its Score file to the same score-k8s generate." .Id .Params.app) }}{{ end }}
+    {{ if not $w.Ports }}{{ fail (printf "app %q declares no service.ports, so it has no Service to reach" .Params.app) }}{{ end }}
+  outputs: |
+    {{ $w := index .WorkloadServices .Params.app }}
+    {{ $port := "" }}
+    {{ range $name, $p := $w.Ports }}{{ if eq (print $port) "" }}{{ $port = $p.Port }}{{ end }}{{ end }}
+    host: {{ $w.ServiceName }}{{ if ne .Namespace "" }}.{{ .Namespace }}.svc.cluster.local{{ end }}
+    port: {{ $port }}
+  expected_outputs:
+    - host
+    - port
+  supported_params:
+    - app
+    - kind
+
+# --- external-api ------------------------------------------------------------
+# `{type: external-api, params: {host, port}}` names a destination outside the
+# cluster. The outputs are the same as on the platform. The platform also
+# renders an egress allowlist; vanilla Kubernetes cannot express a DNS-name
+# rule, so this file renders none (listed divergence).
+- uri: template://glenr/external-api
+  type: external-api
+  description: Outputs host and port of a named external destination; port defaults to 443.
+  init: |
+    {{ $host := default "" .Params.host }}
+    {{ if not $host }}{{ fail (printf "resources.%s: an external-api resource needs params.host, the DNS name this app depends on, e.g. api.stripe.com" .Id) }}{{ end }}
+    {{ if not (regexMatch "^(\\*\\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$" $host) }}{{ fail (printf "resources.%s: host %q is not a destination this platform can allow. It needs at least two lowercase DNS labels (api.stripe.com), optionally led by *. (*.stripe.com)." .Id $host) }}{{ end }}
+    {{ $port := default 443 .Params.port }}
+    {{ if or (lt (int $port) 1) (gt (int $port) 65535) }}{{ fail (printf "resources.%s: port %v is not a TCP port (1-65535). Omit it for 443." .Id $port) }}{{ end }}
+  outputs: |
+    host: {{ .Params.host | quote }}
+    port: {{ default 443 .Params.port }}
+  expected_outputs:
+    - host
+    - port
+  supported_params:
+    - host
+    - port
+
+# --- postgres ----------------------------------------------------------------
+# One CloudNativePG Cluster and its credential Secret. The Cluster accepts TLS
+# connections only and has no superuser access, as on the platform. Requires the
+# CloudNativePG operator on the target cluster. Connection fields reach the
+# workload as outputs; the password and the CA are Secret references.
+- uri: template://glenr/postgres
+  type: postgres
+  description: CloudNativePG Cluster (TLS only, no superuser) plus its credential Secret.
+  init: |
+    randomPassword: {{ randAlphaNum 32 | quote }}
+  state: |
+    cluster: pg-{{ .SourceWorkload }}-{{ substr 0 8 .Guid | lower }}
+    secret: pg-{{ .SourceWorkload }}-{{ substr 0 8 .Guid | lower }}-credentials
+    database: app
+    username: app
+    password: {{ dig "password" .Init.randomPassword .State | quote }}
+  outputs: |
+    host: {{ .State.cluster }}-rw{{ if ne .Namespace "" }}.{{ .Namespace }}.svc.cluster.local{{ end }}
+    port: 5432
+    database: {{ .State.database }}
+    username: {{ .State.username }}
+    password: {{ encodeSecretRef .State.secret "password" }}
+    ca: {{ encodeSecretRef (printf "%s-ca" .State.cluster) "ca.crt" }}
+  expected_outputs:
+    - host
+    - port
+    - database
+    - username
+    - password
+    - ca
+  manifests: |
+    - apiVersion: v1
+      kind: Secret
+      type: kubernetes.io/basic-auth
+      metadata:
+        name: {{ .State.secret }}
+        {{ if ne .Namespace "" }}
+        namespace: {{ .Namespace }}
+        {{ end }}
+        annotations:
+          k8s.score.dev/source-workload: {{ .SourceWorkload }}
+          k8s.score.dev/resource-uid: {{ .Uid }}
+          k8s.score.dev/resource-guid: {{ .Guid }}
+        labels:
+          app.kubernetes.io/managed-by: score-k8s
+          app.kubernetes.io/name: {{ .State.secret }}
+          app.kubernetes.io/instance: {{ .State.cluster }}
+      data:
+        username: {{ .State.username | b64enc }}
+        password: {{ .State.password | b64enc }}
+    - apiVersion: postgresql.cnpg.io/v1
+      kind: Cluster
+      metadata:
+        name: {{ .State.cluster }}
+        {{ if ne .Namespace "" }}
+        namespace: {{ .Namespace }}
+        {{ end }}
+        annotations:
+          k8s.score.dev/source-workload: {{ .SourceWorkload }}
+          k8s.score.dev/resource-uid: {{ .Uid }}
+          k8s.score.dev/resource-guid: {{ .Guid }}
+        labels:
+          app.kubernetes.io/managed-by: score-k8s
+          app.kubernetes.io/name: {{ .State.cluster }}
+          app.kubernetes.io/instance: {{ .State.cluster }}
+      spec:
+        instances: 1
+        imageName: ghcr.io/cloudnative-pg/postgresql:18
+        primaryUpdateStrategy: unsupervised
+        enableSuperuserAccess: false
+        storage:
+          size: 10Gi
+        postgresql:
+          pg_hba:
+          - hostssl all all all scram-sha-256
+          - host all all all reject
+        bootstrap:
+          initdb:
+            database: {{ .State.database }}
+            owner: {{ .State.username }}
+            secret:
+              name: {{ .State.secret }}
+
+# --- volume ------------------------------------------------------------------
+# `{type: volume, class: ephemeral, params: {size}}` is a scratch volume: an
+# `emptyDir` with a `sizeLimit` (design/142 D-142.2). score-k8s's default
+# `volume` provisioner returns `emptyDir: {}` with no limit; this override adds
+# the platform's `sizeLimit` so the pod is held to the same scratch size. The
+# default when `params.size` is absent is the platform's 1Gi (D-142.5). A
+# provisioner with no `class` matches every class (score-k8s Match skips the
+# class test when the provisioner names none, measured on the version pinned by
+# scripts/checks/fetch-score-k8s.sh).
+- uri: template://glenr/volume
+  type: volume
+  description: Scratch emptyDir with the platform's sizeLimit (default 1Gi).
+  init: |
+    {{ if ne .Class "ephemeral" }}{{ fail (printf "resources.%s: a volume needs class: ephemeral; persistent volumes are not available yet" .Id) }}{{ end }}
+    {{ if .Params.size }}{{ if not (regexMatch "^[1-9][0-9]*(Mi|Gi)$" (print .Params.size)) }}{{ fail (printf "resources.%s: params.size %v is not a size this platform accepts. Write a whole number of Mi or Gi, for example 2Gi." .Id .Params.size) }}{{ end }}{{ end }}
+    {{ if .Params.medium }}{{ fail (printf "resources.%s: params.medium is not supported: a scratch volume is disk-backed. Remove medium." .Id) }}{{ end }}
+  outputs: |
+    source:
+      emptyDir:
+        sizeLimit: {{ default "1Gi" .Params.size | quote }}
+  expected_outputs:
+    - source
+  supported_params:
+    - size
+
+# --- secret ------------------------------------------------------------------
+# `{type: secret, params: {name}}` names a Secret you create. The only output is
+# a volume `source`, so a workload mounts a key with a `volumes` entry and its
+# `path`. The provisioner emits no manifest and holds no value. A `files` entry
+# that reads `${resources.<s>.<KEY>}` finds no such output and is refused, which
+# keeps the value out of a ConfigMap.
+- uri: template://glenr/secret
+  type: secret
+  description: Names a customer-created Secret as a volume source; no Secret object, no value.
+  init: |
+    {{ if not .Params.name }}{{ fail (printf "resources.%s: a secret resource needs params.name, the name of the Secret you create from secrets/<env>.example.yaml" .Id) }}{{ end }}
+    {{ if not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" (print .Params.name)) }}{{ fail (printf "resources.%s: params.name %q is not a Kubernetes Secret name (lowercase letters, digits, - and ., at most 253 characters)" .Id (print .Params.name)) }}{{ end }}
+  outputs: |
+    source:
+      secret:
+        secretName: {{ .Params.name | quote }}
+  expected_outputs:
+    - source
+  supported_params:
+    - name

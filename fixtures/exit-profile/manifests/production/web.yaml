@@ -1,0 +1,215 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web-files-6ef64a69
+  namespace: exit-fixture-production
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: exit-fixture
+    app.kubernetes.io/instance: production
+data:
+  f-6b1aa573ff27: |
+    listen = 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: exit-fixture-production
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: exit-fixture
+    app.kubernetes.io/instance: production
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8080
+    protocol: TCP
+    name: http
+  selector:
+    app.kubernetes.io/name: web
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: web-from-ingress
+  namespace: exit-fixture-production
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: exit-fixture
+    app.kubernetes.io/instance: production
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - port: http
+      protocol: TCP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: exit-fixture-production
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: exit-fixture
+    app.kubernetes.io/instance: production
+spec:
+  replicas: 2
+  minReadySeconds: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: web
+        app.kubernetes.io/part-of: exit-fixture
+        app.kubernetes.io/instance: production
+    spec:
+      hostUsers: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: main
+        image: docker.io/library/busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+        command:
+        - /bin/sh
+        - -c
+        args:
+        - mkdir -p /tmp/www && echo ok > /tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www
+        ports:
+        - containerPort: 8080
+          name: http
+          protocol: TCP
+        lifecycle:
+          preStop:
+            sleep:
+              seconds: 5
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "256Mi"
+          limits:
+            cpu: "250m"
+            memory: "256Mi"
+        envFrom:
+        - secretRef:
+            name: glenr-app-secrets
+            optional: true
+        env:
+        - name: PORT
+          value: "8080"
+        - name: LOG_LEVEL
+          value: "info"
+        - name: MAINDB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: maindb-connection
+              key: host
+              optional: false
+        - name: MAINDB_PORT
+          valueFrom:
+            secretKeyRef:
+              name: maindb-connection
+              key: port
+              optional: false
+        - name: MAINDB_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: maindb-connection
+              key: dbname
+              optional: false
+        - name: MAINDB_USER
+          valueFrom:
+            secretKeyRef:
+              name: maindb-connection
+              key: user
+              optional: false
+        - name: MAINDB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: maindb-connection
+              key: password
+              optional: false
+        - name: MAINDB_URL
+          valueFrom:
+            secretKeyRef:
+              name: maindb-connection
+              key: uri
+              optional: false
+        volumeMounts:
+        - name: glenr-files
+          mountPath: "/etc/web/config.yaml"
+          subPath: "f-6b1aa573ff27"
+          readOnly: true
+        - name: glenr-file-secrets
+          mountPath: "/etc/web-secret/token"
+          subPath: "token"
+          readOnly: true
+        - name: "scratch"
+          mountPath: "/tmp/work"
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          periodSeconds: 2
+          timeoutSeconds: 1
+          successThreshold: 1
+          failureThreshold: 3
+      volumes:
+      - name: glenr-files
+        configMap:
+          name: web-files-6ef64a69
+          items:
+          - key: "f-6b1aa573ff27"
+            path: "f-6b1aa573ff27"
+      - name: glenr-file-secrets
+        secret:
+          secretName: web-secret
+          optional: false
+          items:
+          - key: "token"
+            path: "token"
+      - name: "scratch"
+        emptyDir:
+          sizeLimit: "1Gi"
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: exit-fixture-production
+  labels:
+    app.kubernetes.io/name: web
+    app.kubernetes.io/part-of: exit-fixture
+    app.kubernetes.io/instance: production
+spec:
+  rules:
+  - host: web.production.exit-fixture.example.invalid
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web
+            port:
+              number: 80

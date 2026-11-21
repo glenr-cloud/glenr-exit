@@ -1,0 +1,46 @@
+apiVersion: score.dev/v1b1
+metadata:
+  name: web
+containers:
+  main:
+    image: docker.io/library/busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec
+    command: ["/bin/sh", "-c"]
+    args: ["mkdir -p /tmp/www && echo ok > /tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www"]
+    variables:
+      PORT: "8080"
+      LOG_LEVEL: info
+      MAINDB_HOST: ${resources.maindb.host}
+      MAINDB_PORT: ${resources.maindb.port}
+      MAINDB_DATABASE: ${resources.maindb.database}
+      MAINDB_USER: ${resources.maindb.username}
+      MAINDB_PASSWORD: ${resources.maindb.password}
+    files:
+      - target: /etc/web/config.yaml
+        content: |
+          listen = 8080
+    volumes:
+      - source: ${resources.token}
+        path: token
+        target: /etc/web-secret/token
+        readOnly: true
+      - source: ${resources.scratch}
+        target: /tmp/work
+service:
+  ports:
+    http:
+      port: 80
+      targetPort: 8080
+resources:
+  maindb:
+    type: postgres
+  token:
+    type: secret
+    params:
+      name: web-secret
+  scratch:
+    type: volume
+    class: ephemeral
+    params:
+      size: 1Gi
+  route:
+    type: route

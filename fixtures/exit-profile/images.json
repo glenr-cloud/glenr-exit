@@ -1,0 +1,28 @@
+{
+  "apps": [
+    {
+      "name": "web",
+      "source": {},
+      "build_strategy": "image",
+      "environments": [
+        {"environment": "production", "image": "docker.io/library/busybox:1.37.0", "digest": "sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"},
+        {"environment": "staging", "image": "docker.io/library/busybox:1.37.0", "digest": "sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"}
+      ]
+    },
+    {
+      "name": "tick",
+      "source": {},
+      "build_strategy": "image",
+      "environments": [
+        {"environment": "production", "image": "docker.io/library/busybox:1.37.0", "digest": "sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"}
+      ]
+    },
+    {
+      "name": "db",
+      "managed": false,
+      "environments": [
+        {"environment": "production", "image": "", "version": "16"}
+      ]
+    }
+  ]
+}
