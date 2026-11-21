@@ -28,18 +28,19 @@
 # the score-k8s set. Without that rewrite an exported cell with a database does
 # not run with this file.
 #
-# SECRETS: a `secret` resource (design/142 D-142.3) is served as a mounted
-# Secret volume, never as a file. score-k8s renders every workload `files` entry
-# into a ConfigMap (measured 2026-11-20, score-k8s 0.22.0: a file whose content
-# is a secret placeholder puts the value in the ConfigMap's binaryData), which
-# is the ConfigMap leak D-142.3 condition 1 forbids. So the `secret` provisioner
-# below returns only a volume `source` that names a Secret, and the exported
-# `score-k8s/<app>.yaml` mounts it as a `volumes` entry
-# (`{source: ${resources.<s>}, path: <KEY>, target: <file>, readOnly: true}`,
-# F-145-1, written by EXPORT-K7). The provisioner creates no Secret object and
-# holds no value. You create the Secret named in `params.name` from the filled
-# `secrets/<env>.example.yaml`, as on the `manifests/` route. A `files` entry
-# that reads a secret placeholder is refused.
+# SECRETS: a `secret` resource (design/142 D-142.3) is served from a Secret you
+# create, never from a ConfigMap. The `secret` provisioner below returns one
+# Secret reference per key listed in `params.keys` (`encodeSecretRef`), so a
+# workload `files` entry whose content is exactly `${resources.<s>.<KEY>}` is
+# mounted from that Secret key and its value never reaches a ConfigMap
+# (design/145 F-145-1; measured 2026-11-21 on score-k8s 0.22.0: 0 ConfigMaps
+# hold the value). score-k8s merges the Secret mount and the ConfigMap mount of
+# the same directory into one projected volume, so a secret file and a plain
+# file can share a directory and keep their target paths. The provisioner also
+# returns `source`, the Secret as a volume source, for a workload that mounts the
+# Secret with a `volumes` entry. It creates no Secret object and holds no value.
+# You create the Secret named in `params.name` from the filled
+# `secrets/<env>.example.yaml`, as on the `manifests/` route.
 
 # --- route -------------------------------------------------------------------
 # The platform serves every public app on a composed hostname and an HTTPRoute.
@@ -309,22 +310,30 @@
     {{ end }}
 
 # --- secret ------------------------------------------------------------------
-# `{type: secret, params: {name}}` names a Secret you create. The only output is
-# a volume `source`, so a workload mounts a key with a `volumes` entry and its
-# `path`. The provisioner emits no manifest and holds no value. A `files` entry
-# that reads `${resources.<s>.<KEY>}` finds no such output and is refused, which
-# keeps the value out of a ConfigMap.
+# `{type: secret, params: {name, keys}}` names a Secret you create and the keys
+# of it a workload reads. Outputs: `source` (the Secret as a volume source) and
+# one Secret reference per key in `params.keys`, so `${resources.<s>.<KEY>}` in a
+# `files` entry mounts that key from the Secret. A key must be a placeholder
+# segment: letters, digits, `_` and `-`, no `.`; `source` is taken. The provisioner emits no manifest and
+# holds no value. A `files` entry that reads a key not listed in `params.keys`
+# finds no such output and is refused, which keeps the value out of a ConfigMap.
 - uri: template://glenr/secret
   type: secret
-  description: Names a customer-created Secret as a volume source; no Secret object, no value.
+  description: Names a customer-created Secret; returns a Secret reference per key and a volume source. No Secret object, no value.
   init: |
     {{ if not .Params.name }}{{ fail (printf "resources.%s: a secret resource needs params.name, the name of the Secret you create from secrets/<env>.example.yaml" .Id) }}{{ end }}
     {{ if not (regexMatch "^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$" (print .Params.name)) }}{{ fail (printf "resources.%s: params.name %q is not a Kubernetes Secret name (lowercase letters, digits, - and ., at most 253 characters)" .Id (print .Params.name)) }}{{ end }}
+    {{ if and .Params.keys (not (kindIs "slice" .Params.keys)) }}{{ fail (printf "resources.%s: params.keys must be a list of key names" .Id) }}{{ end }}
+    {{ range $k := .Params.keys }}{{ if not (regexMatch "^[A-Za-z_][A-Za-z0-9_-]*$" (print $k)) }}{{ fail (printf "resources.%s: params.keys entry %q is not a placeholder key (letters, digits, _ and -, no .)" $.Id (print $k)) }}{{ end }}{{ if eq (print $k) "source" }}{{ fail (printf "resources.%s: params.keys entry \"source\" is the output that names the Secret as a volume source; rename the key" $.Id) }}{{ end }}{{ end }}
   outputs: |
     source:
       secret:
         secretName: {{ .Params.name | quote }}
+    {{ range $k := uniq (default (list) .Params.keys) }}
+    {{ $k | quote }}: {{ encodeSecretRef (print $.Params.name) (print $k) }}
+    {{ end }}
   expected_outputs:
     - source
   supported_params:
     - name
+    - keys
