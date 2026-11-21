@@ -84,23 +84,13 @@ jobs:
         run: |
           fp=$(openssl pkey -pubin -in keys/export-signing.pub -outform DER | sha256sum | cut -d' ' -f1)
           grep -qF "$fp" README.md || { echo "keys/export-signing.pub fingerprint $fp is not in the README table"; exit 1; }
-      # Finding F-1 (GLE-3154): the exit profile writes `hostUsers: false` into
-      # every pod spec. On kind (containers inside a container) the pod sandbox
-      # fails with `error mounting "sysfs" ... operation not permitted`, so no
-      # pod starts. T1 removes the field from its copy of the fixture before it
-      # signs it; the committed fixture keeps it. Assumed, not measured: T2 (k3s on a
-      # server) is where the field runs.
-      - name: Prepare a kind copy of the fixture (no hostUsers)
-        run: |
-          set -euo pipefail
-          cp -R fixtures/exit-profile "$RUNNER_TEMP/fixture"
-          for f in web tick; do
-            yq -i 'del(.spec.template.spec.hostUsers) | del(.spec.jobTemplate.spec.template.spec.hostUsers)' "$RUNNER_TEMP/fixture/manifests/production/$f.yaml"
-          done
-          if grep -rq hostUsers "$RUNNER_TEMP/fixture/manifests"; then echo "hostUsers is still in the kind copy"; exit 1; fi
       - name: Sign the fixture
-        run: bin/make-test-export.sh "$RUNNER_TEMP/fixture" export "$RUNNER_TEMP/keys"
-      - name: README steps 1, 3, 4, 5 and 7 (P-1)
+        run: bin/make-test-export.sh fixtures/exit-profile export "$RUNNER_TEMP/keys"
+      # kind has no user namespaces (F-1, GLE-3154), so t1 runs the README's
+      # "A cluster without user namespaces" commands as written: the field is
+      # removed after step 1 and before the apply, and the label goes on after
+      # the apply, which resets it (F-2).
+      - name: README steps 1, 3, 4, 5 and 7, with "A cluster without user namespaces" (P-1)
         run: |
           set -euo pipefail
           pub="$RUNNER_TEMP/keys/pub.pem"
@@ -110,19 +100,23 @@ jobs:
             'kubectl apply -f ./export/manifests/production/_namespace.yaml'
             'cp ./export/secrets/production.example.yaml ./export/secrets/production.yaml'
             'kubectl apply -f ./export/secrets/production.yaml'
+            "find ./export/manifests/production -name '*.yaml' -exec yq -i 'del(.spec.template.spec.hostUsers) | del(.spec.jobTemplate.spec.template.spec.hostUsers)' {} \\;"
             'kubectl apply -f ./export/manifests/production/'
+            'kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=baseline --overwrite'
           )
           for c in "${cmds[@]}"; do
-            grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
+            grep -qxF -- "$c" README.md || grep -qF -- "$c" README.md || { echo "README.md no longer contains: $c"; exit 1; }
           done
           # `kubectl apply -f ./export/manifests/production/` is also a prefix of
           # step 4's command: require step 7's line on its own.
-          grep -qxF -- "${cmds[5]}" README.md || { echo "README.md has no line holding only: ${cmds[5]}"; exit 1; }
+          grep -qxF -- "${cmds[6]}" README.md || { echo "README.md has no line holding only: ${cmds[6]}"; exit 1; }
+          grep -qxF -- "${cmds[7]}" README.md || { echo "README.md has no line holding only: ${cmds[7]}"; exit 1; }
           # The default key is the deployed one: an export signed with the
           # generated key must be refused under it.
           if out=$(bin/verify.sh ./export 2>&1); then echo "verify.sh accepted a test-signed export under the deployed key"; exit 1; fi
           echo "$out" | grep -q 'does not verify' || { echo "verify.sh refused for another reason: $out"; exit 1; }
-          run() { echo "+ $1"; eval "${1//<public-key>/$pub}"; }
+          ns=$(yq 'select(.kind == "Namespace") | .metadata.name' ./export/manifests/production/_namespace.yaml)
+          run() { local c=${1//<public-key>/$pub}; c=${c//<namespace>/$ns}; echo "+ $c"; eval "$c"; }
           run "${cmds[0]}"
           run "${cmds[1]}"
           run "${cmds[2]}"
@@ -130,14 +124,12 @@ jobs:
           # README step 5: "fill the values".
           yq -i '.stringData |= with_entries(.value = "fixture-" + .key)' ./export/secrets/production.yaml
           run "${cmds[4]}"
-          run "${cmds[5]}"          # P-1: exits 0
-          # Finding F-2 (GLE-3154): the pods in `manifests/` set no runAsNonRoot,
-          # so the namespace's Pod Security `restricted` label refuses them
-          # (`runAsNonRoot != true`). Step 7 applies `_namespace.yaml` again, which
-          # resets any label set before it, so the label goes on after step 7; the
-          # ReplicaSet and Job controllers retry the refused pods.
-          ns=$(yq 'select(.kind == "Namespace") | .metadata.name' ./export/manifests/production/_namespace.yaml)
-          kubectl label namespace "$ns" pod-security.kubernetes.io/enforce=baseline --overwrite
+          # The fixture carries the field the README command removes.
+          grep -rq hostUsers ./export/manifests/production || { echo "the fixture has no hostUsers: the README command would remove nothing"; exit 1; }
+          run "${cmds[5]}"
+          if grep -rq hostUsers ./export/manifests/production; then echo "hostUsers is still in the manifests after the README command"; exit 1; fi
+          run "${cmds[6]}"          # P-1: exits 0
+          run "${cmds[7]}"          # the ReplicaSet and Job controllers retry the refused pods
       - name: P-3 Deployments available, CronJob job completes
         run: |
           set -euo pipefail
@@ -207,40 +199,21 @@ jobs:
           kubectl apply --server-side -f "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
           kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=5m
           kubectl -n "$ns" get gateway default
-      # Findings F-2 and F-3 (GLE-3154). Step 4 creates the namespace from
-      # `_namespace.yaml`: Pod Security `restricted` and a default-deny ingress
-      # NetworkPolicy. kind's CNI enforces NetworkPolicy. With both in place:
-      #   F-2  the Deployments score-k8s renders are refused (no securityContext,
-      #        no runAsNonRoot);
-      #   F-3  no pod in the namespace accepts ingress, so the CloudNativePG
-      #        operator gets "Instance Status Extraction Error: HTTP communication
-      #        issue" and the Cluster never becomes Ready, and Traefik cannot
-      #        reach `web` through the Gateway.
-      # This step is what a customer adds for the route; the README states neither
-      # change yet. It sets the label to `baseline` and allows ingress from the
-      # operator, the ingress controller and the namespace itself.
-      - name: Route prerequisites the README does not state (F-2, F-3)
+      # F-2 and F-3 (GLE-3154): after step 4 the namespace is Pod Security
+      # `restricted` with a default-deny ingress policy. The README's second
+      # route sets `baseline` and applies examples/score-k8s-allow-ingress.yaml.
+      - name: Second route prerequisites (README, Pod Security label and allow policy)
         run: |
           set -euo pipefail
-          kubectl label namespace "$NS" pod-security.kubernetes.io/enforce=baseline --overwrite
-          kubectl -n "$NS" apply -f - <<EOF
-          apiVersion: networking.k8s.io/v1
-          kind: NetworkPolicy
-          metadata:
-            name: allow-route-and-database
-          spec:
-            podSelector: {}
-            policyTypes:
-            - Ingress
-            ingress:
-            - from:
-              - podSelector: {}
-              - namespaceSelector:
-                  matchExpressions:
-                  - key: kubernetes.io/metadata.name
-                    operator: In
-                    values: ["traefik", "cnpg-system"]
-          EOF
+          cmds=(
+            'kubectl label namespace <namespace> pod-security.kubernetes.io/enforce=baseline --overwrite'
+            'kubectl -n <namespace> apply -f examples/score-k8s-allow-ingress.yaml'
+          )
+          for c in "${cmds[@]}"; do
+            grep -qxF -- "$c" README.md || { echo "README.md has no line holding only: $c"; exit 1; }
+            c=${c//<namespace>/$NS}
+            echo "+ $c"; eval "$c"
+          done
       - name: score-k8s route for staging (README, the second route)
         run: |
           set -euo pipefail
