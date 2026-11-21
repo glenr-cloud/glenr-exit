@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: postgres
+  namespace: exit-gate-production
   labels:
     app.kubernetes.io/name: postgres
     app.kubernetes.io/part-of: exit-gate

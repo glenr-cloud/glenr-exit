@@ -18,6 +18,12 @@
 #
 # A file that does not parse as YAML/JSON is refused, never treated as "no
 # apiVersion found". Requires yq (mikefarah, v4).
+#
+# A directory named `addons` below the manifest directory is skipped and named
+# in the output. It holds optional objects of CRD-based add-ons (for example
+# Gateway API under addons/gateway-api/) that the customer installs on their own
+# cluster; `kubectl apply -f <env>/` does not descend into it, and the allowlist
+# above does not apply to them.
 set -euo pipefail
 
 if [ "$#" -ne 1 ]; then
@@ -38,8 +44,12 @@ allowed() {
 }
 
 fail=0
+# name each skipped addons directory (see the header)
+while IFS= read -r a; do
+	echo "check: skipping $a (addons are not part of the exit profile; see the header of $0)"
+done < <(find "$dir" -mindepth 1 -type d -name addons | sort)
 # find every manifest file bellow the directory, including hidden ones and JSON,
-# sorted for stable output
+# sorted for stable output; a directory named addons is pruned
 while IFS= read -r f; do
 	# every apiVersion in the file, including items inside a `kind: List`
 	if ! avs=$(yq -N -r '(.. | select(tag == "!!map" and has("apiVersion")) | .apiVersion) // ""' "$f" 2>/dev/null); then
@@ -72,7 +82,7 @@ while IFS= read -r f; do
 		echo "check: $f: Secret '$name' has non-empty data or stringData" >&2
 		fail=1
 	done <<<"$names"
-done < <(find "$dir" -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) | sort)
+done < <(find "$dir" -mindepth 1 -type d -name addons -prune -o -type f \( -name '*.yaml' -o -name '*.yml' -o -name '*.json' \) -print | sort)
 
 if [ "$fail" -ne 0 ]; then
 	echo "check: refused" >&2
