@@ -18,11 +18,9 @@ containers:
       - target: /etc/web/config.yaml
         content: |
           listen = 8080
+      - target: /etc/web/token
+        content: ${resources.token.token}
     volumes:
-      - source: ${resources.token}
-        path: token
-        target: /etc/web-secret/token
-        readOnly: true
       - source: ${resources.scratch}
         target: /tmp/work
 service:
@@ -37,6 +35,7 @@ resources:
     type: secret
     params:
       name: web-secret
+      keys: [token]
   scratch:
     type: volume
     class: ephemeral

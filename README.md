@@ -230,13 +230,11 @@ Apply the rendered objects from `./export`:
 kubectl apply -f manifests.yaml
 ```
 
-Keep plain files and secret files in separate directories. score-k8s mounts
-the ConfigMap that holds a container's plain files over the whole target
-directory, so a secret file in the same directory cannot be mounted inside it:
-the pod fails to start with `runc: ... not a directory`. Example: with a plain
-file at `/etc/web/config.yaml`, put the secret file at
-`/etc/web-secret/token`, not `/etc/web/token`. Change the path in
-`score-k8s/<app>.yaml` and in the app's own configuration.
+A secret file (a `files` entry whose content is `${resources.<s>.<KEY>}`) is
+mounted from the Secret named in the `secret` resource's `params.name`, in the
+directory of its target path, next to any plain file there. Its value is in no
+ConfigMap. Create that Secret from `secrets/<env>.example.yaml` (step 5) before
+you apply `manifests.yaml`.
 
 ## Suffixes, variables and scale
 
