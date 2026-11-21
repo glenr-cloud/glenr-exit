@@ -31,3 +31,15 @@ reproduce.
 - The export is signed in CI with a key the workflow generates
   (`bin/make-test-export.sh`). The private half of the deployed export key is
   not in this repository.
+
+## Differences the jobs apply, and why
+
+The first CI runs of this fixture (GLE-3154) found three places where the
+export's own files do not run unchanged on `kind` with the README's steps.
+The workflow names each one in a comment.
+
+| # | Finding | What the job does |
+|---|---|---|
+| F-1 | The exit profile writes `hostUsers: false` into pod specs. On `kind` a pod sandbox fails with `error mounting "sysfs" ... operation not permitted`. | `t1` removes the field from its copy of the fixture before signing it. The committed fixture keeps it. |
+| F-2 | `_namespace.yaml` sets Pod Security `restricted`. The Deployments `score-k8s` renders have no `securityContext`, so the namespace refuses them. | `t1b` sets the label to `baseline` after step 4. |
+| F-3 | `_namespace.yaml` creates a default-deny ingress NetworkPolicy and `kind`'s CNI enforces it. The CloudNativePG operator cannot reach its instance (`Instance Status Extraction Error: HTTP communication issue`) and Traefik cannot reach `web`. The `manifests/` route has `web-from-ingress`; the score-k8s route has no policy. | `t1b` applies one NetworkPolicy that allows ingress from the namespace, `traefik` and `cnpg-system`. |

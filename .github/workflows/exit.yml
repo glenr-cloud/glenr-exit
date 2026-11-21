@@ -83,8 +83,21 @@ jobs:
         run: |
           fp=$(openssl pkey -pubin -in keys/export-signing.pub -outform DER | sha256sum | cut -d' ' -f1)
           grep -qF "$fp" README.md || { echo "keys/export-signing.pub fingerprint $fp is not in the README table"; exit 1; }
+      # Finding F-1 (GLE-3154): the exit profile writes `hostUsers: false` into
+      # every pod spec. On kind (containers inside a container) the pod sandbox
+      # fails with `error mounting "sysfs" ... operation not permitted`, so no
+      # pod starts. T1 removes the field from its copy of the fixture before it
+      # signs it; the committed fixture keeps it. T2 (k3s on a server) runs it.
+      - name: Prepare a kind copy of the fixture (no hostUsers)
+        run: |
+          set -euo pipefail
+          cp -R fixtures/exit-profile "$RUNNER_TEMP/fixture"
+          for f in web tick; do
+            yq -i 'del(.spec.template.spec.hostUsers) | del(.spec.jobTemplate.spec.template.spec.hostUsers)' "$RUNNER_TEMP/fixture/manifests/production/$f.yaml"
+          done
+          ! grep -rq hostUsers "$RUNNER_TEMP/fixture/manifests"
       - name: Sign the fixture
-        run: bin/make-test-export.sh fixtures/exit-profile export "$RUNNER_TEMP/keys"
+        run: bin/make-test-export.sh "$RUNNER_TEMP/fixture" export "$RUNNER_TEMP/keys"
       - name: README steps 1 to 5 and 7 (P-1)
         run: |
           set -euo pipefail
@@ -175,6 +188,39 @@ jobs:
           kubectl apply --server-side -f "https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v${CNPG_VERSION}/cnpg-${CNPG_VERSION}.yaml"
           kubectl -n cnpg-system rollout status deploy/cnpg-controller-manager --timeout=5m
           kubectl -n "$ns" get gateway default
+      # Findings F-2 and F-3 (GLE-3154). Step 4 creates the namespace from
+      # `_namespace.yaml`: Pod Security `restricted` and a default-deny ingress
+      # NetworkPolicy. kind's CNI enforces NetworkPolicy. With both in place:
+      #   F-2  the Deployments score-k8s renders are refused (no securityContext);
+      #   F-3  no pod in the namespace accepts ingress, so the CloudNativePG
+      #        operator gets "Instance Status Extraction Error: HTTP communication
+      #        issue" and the Cluster never becomes Ready, and Traefik cannot
+      #        reach `web` through the Gateway.
+      # This step is what a customer has to add for the route; the README does not
+      # say so yet. It sets the label to `baseline` and allows ingress from the
+      # operator, the ingress controller and the namespace itself.
+      - name: Route prerequisites the README does not state (F-2, F-3)
+        run: |
+          set -euo pipefail
+          kubectl label namespace "$NS" pod-security.kubernetes.io/enforce=baseline --overwrite
+          kubectl -n "$NS" apply -f - <<EOF
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: allow-route-and-database
+          spec:
+            podSelector: {}
+            policyTypes:
+            - Ingress
+            ingress:
+            - from:
+              - podSelector: {}
+              - namespaceSelector:
+                  matchExpressions:
+                  - key: kubernetes.io/metadata.name
+                    operator: In
+                    values: ["traefik", "cnpg-system"]
+          EOF
       - name: score-k8s route for staging (README, the second route)
         run: |
           set -euo pipefail
