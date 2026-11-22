@@ -2,7 +2,7 @@
 # images.sh — move a cell export's images to a registry the customer controls.
 # Usage:
 #   bin/images.sh plan    <images.json> <dest-registry>   # print src<TAB>dest per row
-#   bin/images.sh copy    <images.json> <dest-registry>   # copy each image out
+#   bin/images.sh copy    <images.json> <dest-registry> [<images-dir> <env>]  # copy each image out
 #   bin/images.sh load    <images.json> <images-dir> <env> <dest-registry>  # push hand-over archives
 #   bin/images.sh rewrite <manifests-dir> <dest-registry> # point the manifests at it
 #
@@ -16,7 +16,12 @@
 # image in a public registry; an image in the zone registry needs a credential
 # Glenr does not hand over, and goes through `load`. A digest that names an index
 # is copied whole: every platform it lists. A row with no image (the cell's
-# database) carries nothing to copy and is skipped.
+# database) carries nothing to copy and is skipped. Given the hand-over
+# directory and an environment (`copy <images.json> <dest> <images-dir> <env>`),
+# `copy` handles the rows of <env> only and skips a row that has an archive
+# `<images-dir>/<env>/<app>.tar`, the file `load` pushes. `load` then `copy`
+# with the same <images-dir> and <env> cover every image of the environment. Without
+# them `copy` reads every row and stops at an image it cannot read.
 #
 # `load` pushes the images Glenr hands over as OCI archives, for an image that
 # sits in the zone registry. Glenr hands over no credential for that registry, so
@@ -103,6 +108,7 @@ image_rows() {
 cmd=$1
 case "$cmd" in
 load) [ "$#" -eq 5 ] || usage ;;
+copy) [ "$#" -eq 3 ] || [ "$#" -eq 5 ] || usage ;;
 *) [ "$#" -eq 3 ] || usage ;;
 esac
 
@@ -126,15 +132,32 @@ copy)
 	command -v crane >/dev/null 2>&1 || { echo "images: crane is required" >&2; exit 2; }
 	command -v jq >/dev/null 2>&1 || { echo "images: jq is required" >&2; exit 2; }
 	[ -f "$images" ] || { echo "images: $images not found" >&2; exit 2; }
-	rows=$(image_rows "$images" "$dest") || exit 2
+	srcdir=${4:-}
+	env=${5:-}
+	if [ "$#" -eq 5 ]; then
+		srcdir=${srcdir%/}
+		[ -d "$srcdir" ] || { echo "images: $srcdir is not a directory" >&2; exit 2; }
+		[ -n "$env" ] || usage
+	fi
+	rows=$(image_rows "$images" "$dest" "$env") || exit 2
 	# The rows the file lists, before the skips above: an export that lists no
 	# row at all is broken; an export that lists rows none of which need a copy
 	# is not.
-	listed=$(jq -r '[.apps[]? | .environments[]?] | length' "$images") || exit 2
+	listed=$(jq -r --arg env "$env" '[.apps[]? | .environments[]? | select($env == "" or .environment == $env)] | length' "$images") || exit 2
 	copied=0
 	while IFS=$'\t' read -r app src to; do
 		if [ -z "$app" ]; then
 			continue
+		fi
+		if [ -n "$srcdir" ]; then
+			# The same app-name guard as `load`: the name becomes a path.
+			case "$app" in
+			*/* | .*) echo "images: app name '$app' is not a file name" >&2; exit 1 ;;
+			esac
+			if [ -f "$srcdir/$env/$app.tar" ]; then
+				echo "images: skip $app (archive $srcdir/$env/$app.tar; load pushes it)" >&2
+				continue
+			fi
 		fi
 		echo "images: copy $src -> $to"
 		crane copy "$src" "$to"
@@ -147,7 +170,11 @@ copy)
 			echo "images: images.json lists no images to copy" >&2
 			exit 1
 		fi
-		echo "images: nothing to copy (every row has no image or no registry host)"
+		if [ -n "$srcdir" ]; then
+			echo "images: nothing to copy (every row has no image, no registry host or an archive)"
+		else
+			echo "images: nothing to copy (every row has no image or no registry host)"
+		fi
 		exit 0
 	fi
 	echo "images: copied $copied image(s) to $dest"

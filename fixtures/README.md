@@ -50,7 +50,7 @@ workaround step of its own.
 
 | Item | Where it is tested |
 |---|---|
-| README step 2 (`images.sh copy` and `rewrite` against a registry) | `bin/selftest.sh` covers `rewrite`; `copy` has no job |
+| README step 2: `images.sh copy` of a row with a tag and no digest, and from a real public registry | `bin/selftest.sh` covers `rewrite`; the `mixed` job covers `load` then `copy` by digest between two local registries |
 | The Ingress object in `manifests/` | no job sends a request through it |
 | `GET /exit-check`, the row counts of the cell's own database | design/145 gate check 6 on T2 |
 | `hostUsers: false` taking effect (user namespaces on the nodes) | no job: `kind` has none, so `t1` removes the field. Design/145 gate check 6 exercises it on a k3s cluster (T2) |
@@ -85,3 +85,10 @@ destination registry, asserts that every `image:` in the score-k8s output is
 its `images.sh rewrite ./export/overrides` line and requires the assertion to
 fail (the mutant). The fixture holds no cluster object: the case needs
 `score-k8s`, `yq` and `jq` only.
+
+## Other fixtures
+
+| Path | Used by | Holds |
+|---|---|---|
+| `load/` | `bin/test-load.sh` | one OCI archive (`images/production/api.tar`) and its `images.json` |
+| `mixed/` | `bin/test-mixed.sh` | `images.json` with one archive row, one public row and a `staging` row that `copy` must not touch, and the archive (`images/production/api.tar`, the file in `load/`); the test replaces `PUBLIC_HOST` and `PUBLIC_DIGEST` in the public row |

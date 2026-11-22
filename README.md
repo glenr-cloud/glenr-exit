@@ -35,9 +35,13 @@ route), `e5a86c5` (source-built app). Limits of this test:
   `bin/images.sh load` pushed it. `bin/images.sh copy` from a zone registry is
   unsupported, because Glenr hands over no credential for it.
 - The third run applied `manifests/` only. The second route (score-k8s) was
-  not run on the source-built app, and an export that holds both archives and
-  public images was not run. Its step 5 applied `secrets/<env>.example.yaml`
-  unchanged: the cell has no secret.
+  not run on the source-built app: for such an app it is rendered in CI (the
+  `t1b` step `bin/test-second-route.sh`: the `rewrite` lines, then
+  `score-k8s generate` offline, and the generated `image:` names the
+  destination), not run on a cluster. Its step 5 applied
+  `secrets/<env>.example.yaml` unchanged: the cell has no secret.
+- An export that holds both archives and public images is loaded and copied in
+  CI (the job `mixed`: two local registries, no cluster), not run on a cluster.
 - TLS was not exercised: every request used plain HTTP.
 
 ## What an export holds
@@ -96,14 +100,16 @@ Move each image to a registry you control, then point the manifests at it
 (design/145 §4.4 step 5). Use `load` for an image with an archive at
 `images/<env>/<app>.tar` (an OCI archive, one image per file): put the `images`
 directory inside this repository's directory, next to `export/`. Use `copy` for an
-image in a public registry, which has no archive. Run `load` once for each
-environment you apply.
+image in a public registry, which has no archive. Pass `copy` the same `images`
+directory and environment, and it skips each image `load` pushed, so `load` then
+`copy` covers every image with no step by hand. Run `load` and `copy` once for
+each environment you apply.
 
 ```sh
 crane auth login <your-registry>            # once, however your registry wants it
 bin/images.sh plan    ./export/images.json  <your-registry>   # optional: list what load and copy do
 bin/images.sh load    ./export/images.json  ./images production <your-registry>   # images handed over as archives
-bin/images.sh copy    ./export/images.json  <your-registry>   # only when every image is in a public registry
+bin/images.sh copy    ./export/images.json  <your-registry> ./images production   # images in a public registry; skips those load pushed
 bin/images.sh rewrite ./export/manifests    <your-registry>
 ```
 
@@ -111,14 +117,15 @@ bin/images.sh rewrite ./export/manifests    <your-registry>
 |---|---|
 | `plan` | prints one line per image, `<source>` TAB `<destination>`, and moves nothing |
 | `load` | for each image of the environment (`production` above) that has an archive `./images/<env>/<app>.tar`: extracts the archive, refuses it when a file under `blobs/sha256/` does not hash to its name or when the SHA-256 of its manifest differs from the `sha256:` digest `images.json` records, and pushes it to `<your-registry>/<path>` with `crane`. It then reads the digest back from your registry and fails when it differs. A row with no archive is skipped with a line on stderr. `load` fails when it loaded no archive |
-| `copy` | copies each image to `<your-registry>/<path>`, where `<path>` is the source reference without its registry host (`library/postgres`, not `postgres`). It copies by the `sha256:` digest when `images.json` records one, and by the reference as written (its tag) otherwise. It reads every row with an image, so it stops at an image it cannot read without a credential: run it only when every image is in a public registry |
+| `copy` | copies each image to `<your-registry>/<path>`, where `<path>` is the source reference without its registry host (`library/postgres`, not `postgres`). It copies by the `sha256:` digest when `images.json` records one, and by the reference as written (its tag) otherwise. With `./images production` after the registry, it handles the rows of that environment and skips each row that has an archive `./images/production/<app>.tar`, with a line on stderr. Without them it reads every row with an image and stops at an image it cannot read without a credential (a zone-registry image): leave them out only when every image is in a public registry |
 | `rewrite` | changes only the registry host in every `image:` value and keeps the path and digest, so each reference names a path `load` or `copy` filled |
 
 `load` and `copy` write each image to the same `<path>`. An export that holds
-both kinds of image: run `load`, then run `crane copy <source> <destination>`
-for each public image, with the pair `plan` printed for it.
+both kinds of image: run `load`, then `copy` with the same `./images` and
+environment. `copy` skips the images `load` pushed and copies the public ones.
 
-Rows `plan`, `load` and `copy` skip, each with a line on stderr:
+Rows `plan`, `load` and `copy` skip, each with a line on stderr (`copy` also skips
+a row that has an archive, as the table says):
 - a row with no image (the cell's database): nothing to move;
 - a reference with no registry host (`postgres:16`): `rewrite` leaves it as it
   is, so that object keeps pulling from the registry it names today.
