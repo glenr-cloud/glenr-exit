@@ -54,3 +54,20 @@ workaround step of its own.
 | The Ingress object in `manifests/` | no job sends a request through it |
 | `GET /exit-check`, the row counts of the cell's own database | design/145 gate check 6 on T2 |
 | `hostUsers: false` taking effect (user namespaces on the nodes) | no job: `kind` has none, so `t1` removes the field. Design/145 gate check 6 exercises it on a k3s cluster (T2) |
+
+## `load/`
+
+`load/` holds the input of `bin/test-load.sh` and the `load` job (design/150
+KIT-LOAD): `images.json` and `images/production/api.tar`, a kind 5 hand-over
+file (an `oci-archive`: `index.json`, `oci-layout`, `blobs/sha256/`). The image
+has one layer (`hello.txt`) and the manifest digest recorded in `images.json`.
+`images.json` also holds a public-registry row (`cache`, no archive) and a
+`staging` row (no archive), so the test shows that `load` skips the first and
+leaves the second alone.
+
+The archive was made with `crane` v0.22.1, on `crane registry serve` in memory:
+`crane append --oci-empty-base -f layer.tar -t <host>/api:fixture`, then
+`crane pull --format oci <host>/api:fixture layout/`, then
+`tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf api.tar -C layout .`
+with `layout/` set to mode `u=rwX,go=rX`, and `layer.tar` made the same way from
+`hello.txt`.

@@ -53,7 +53,8 @@ export.
 - `kubectl` pointed at your cluster.
 - `openssl` (3.x), `sha256sum`, `base64` (coreutils) for `bin/verify.sh`.
 - `yq` v4 (Mike Farah) for `bin/check.sh` and `bin/images.sh rewrite`.
-- `jq` for `bin/images.sh plan`; `crane` and `jq` for `bin/images.sh copy`.
+- `jq` for `bin/images.sh plan`; `crane` and `jq` for `bin/images.sh copy`;
+  `crane`, `jq`, `tar` and `sha256sum` for `bin/images.sh load`.
 
 ## Cluster requirements
 
@@ -81,27 +82,37 @@ you can also pass the key printed on the page where you downloaded the export.
 Verify before step 2: `rewrite` edits files of the export in place, so the
 export no longer matches `MANIFEST` after it.
 
-### 2. Copy the images out of the zone registry
+### 2. Move the images to your registry
 
-The images sit in the zone registry, and that registry closes when retrieval
-ends. Copy each image, then point the manifests at the registry you copied to
-(design/145 §4.4 step 5).
+An image built from your repository sits in the Glenr zone registry, and that
+registry closes when retrieval ends. Glenr hands over no credential for it.
+Glenr staff hand each such image over as a file instead: `images/<env>/<app>.tar`,
+one OCI archive per image. Put the `images` directory next to this repository
+and run `load`. An image in a public registry has no archive: run `copy` for it.
+Then point the manifests at the registry you moved the images to (design/145
+§4.4 step 5).
 
 ```sh
 crane auth login <your-registry>            # once, however your registry wants it
-bin/images.sh plan    ./export/images.json  <your-registry>   # optional: list what copy does
-bin/images.sh copy    ./export/images.json  <your-registry>
+bin/images.sh plan    ./export/images.json  <your-registry>   # optional: list what load and copy do
+bin/images.sh load    ./export/images.json  ./images production <your-registry>   # images handed over as archives
+bin/images.sh copy    ./export/images.json  <your-registry>   # images in public registries only
 bin/images.sh rewrite ./export/manifests    <your-registry>
 ```
 
 | Command | What it does |
 |---|---|
-| `plan` | prints one line per image, `<source>` TAB `<destination>`, and copies nothing |
-| `copy` | copies each image to `<your-registry>/<path>`, where `<path>` is the source reference without its registry host (`library/postgres`, not `postgres`). It copies by the `sha256:` digest when `images.json` records one, and by the reference as written (its tag) otherwise |
-| `rewrite` | changes only the registry host in every `image:` value and keeps the path and digest, so each reference names a path `copy` filled |
+| `plan` | prints one line per image, `<source>` TAB `<destination>`, and moves nothing |
+| `load` | for each image of the environment (`production` above) that has an archive `./images/<env>/<app>.tar`: extracts the archive, refuses it when the SHA-256 of its manifest differs from the `sha256:` digest `images.json` records, and pushes it to `<your-registry>/<path>` with `crane`. It then reads the digest back from your registry and fails when it differs. A row with no archive is skipped with a line on stderr. `load` fails when it loaded no archive |
+| `copy` | copies each image to `<your-registry>/<path>`, where `<path>` is the source reference without its registry host (`library/postgres`, not `postgres`). It copies by the `sha256:` digest when `images.json` records one, and by the reference as written (its tag) otherwise. It reads every row with an image, so it stops at an image in the Glenr zone registry: run it only for an export whose images are all in public registries |
+| `rewrite` | changes only the registry host in every `image:` value and keeps the path and digest, so each reference names a path `load` or `copy` filled |
 
-Rows `plan` and `copy` skip, each with a line on stderr:
-- a row with no image (the cell's database): nothing to copy;
+`load` and `copy` write each image to the same `<path>`. An export that holds
+both kinds of image: run `load`, then run `crane copy <source> <destination>`
+for each public image, with the pair `plan` printed for it.
+
+Rows `plan`, `load` and `copy` skip, each with a line on stderr:
+- a row with no image (the cell's database): nothing to move;
 - a reference with no registry host (`postgres:16`): `rewrite` leaves it as it
   is, so that object keeps pulling from the registry it names today.
 
@@ -243,7 +254,7 @@ non-root user starts as it did there. A document without the annotation is
 unchanged. The `manifests/` route already carries the three fields.
 
 Compare each `image:` in `score-k8s/` with the destinations
-`bin/images.sh plan` printed: a path that is not in that list was not copied,
+`bin/images.sh plan` printed: a path that is not in that list was not copied or loaded,
 and a pod using it cannot pull its image.
 
 Run `score-k8s generate` once per app in `score-k8s/`, each with its own
