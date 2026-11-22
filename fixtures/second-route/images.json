@@ -1,0 +1,18 @@
+{
+  "apps": [
+    {
+      "name": "web",
+      "source": {"repository": "https://github.com/glenr-cloud/pulse", "provider": "github", "path": "api"},
+      "dockerfile_path": "",
+      "build_strategy": "auto",
+      "environments": [
+        {
+          "environment": "production",
+          "git_ref": "main",
+          "image": "lz7.apps.glenr.io/exitsrc/exit-src/web@sha256:c4637041d654875358d442586feb8ce716f5aa53fb2d409b90315985234caaef",
+          "digest": "sha256:c4637041d654875358d442586feb8ce716f5aa53fb2d409b90315985234caaef"
+        }
+      ]
+    }
+  ]
+}

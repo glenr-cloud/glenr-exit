@@ -1,0 +1,11 @@
+apiVersion: score.dev/v1b1
+metadata:
+  name: web
+containers:
+  main:
+    image: "lz7.apps.glenr.io/exitsrc/exit-src/web@sha256:c4637041d654875358d442586feb8ce716f5aa53fb2d409b90315985234caaef"
+service:
+  ports:
+    http:
+      port: 3000
+      targetPort: 3000

@@ -14,6 +14,10 @@
 # throwaway key and proves verify.sh and check.sh accept a good export and
 # refuse each bad case, and that images.sh rewrite keeps the digest.
 #
+# The `t1b` job also runs bin/test-second-route.sh on fixtures/second-route/, an
+# export of an app built from source (every input names the zone registry): the
+# README's second-route block must leave no zone host in the score-k8s output.
+#
 # The `load` job pushes the fixture archive fixtures/load/images/production/api.tar
 # (a kind 5 hand-over file) into a local registry with images.sh load, reads the
 # digest back with crane, and proves load refuses each changed archive.
@@ -218,6 +222,12 @@ jobs:
           tar -xzf "$archive" -C /tmp score-k8s
           sudo mv /tmp/score-k8s /usr/local/bin/score-k8s
           score-k8s --version | head -1
+      # An app Glenr built from source: its images.json, score-k8s/ and overrides/
+      # name the zone registry. Runs the README's second-route block, asserts every
+      # image in the score-k8s output names the destination, then runs the block
+      # without the overrides rewrite and expects the assertion to fail.
+      - name: Second route, source-built app (fixtures/second-route, with a mutant)
+        run: bash bin/test-second-route.sh
       - name: Sign the fixture
         run: bin/make-test-export.sh fixtures/exit-profile export "$RUNNER_TEMP/keys"
       - name: Create the cell namespace (README step 4)

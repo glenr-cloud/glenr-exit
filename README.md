@@ -224,9 +224,9 @@ from the same operator file as the one at the root of this repository;
 `bin/release.sh` refuses to release when this repository's copy differs from
 the operator's.
 
-Step 2 rewrote only `manifests/`. Point the Score documents at your registry
-too. score-k8s writes no `securityContext` into its Deployments, so the
-namespace's Pod Security level `restricted` refuses them. After step 4, set the
+Step 2 rewrote only `manifests/`. Point the Score documents and the override
+files at your registry too. score-k8s writes no `securityContext` into its
+Deployments, so the namespace's Pod Security level `restricted` refuses them. After step 4, set the
 level to `baseline`, and allow ingress into the namespace: step 4's
 default-deny NetworkPolicy has no allow policy for this route (the `manifests/`
 route carries `web-from-ingress`; score-k8s renders none).
@@ -243,6 +243,7 @@ Then render:
 
 ```sh
 bin/images.sh rewrite ./export/score-k8s <your-registry>
+bin/images.sh rewrite ./export/overrides <your-registry>
 cd ./export
 mkdir -p .score-k8s && cp glenr.provisioners.yaml .score-k8s/
 score-k8s init --no-sample --patch-templates overrides/production/score-k8s-patch.tpl --patch-templates ../examples/score-k8s-run-as-user.tpl
@@ -300,7 +301,7 @@ pull request:
 |---|---|
 | `selftest` | `bin/selftest.sh`: builds a signed export from `testdata/fixture` with a throwaway key and proves `verify.sh` and `check.sh` accept a good export and refuse each bad case |
 | `t1` | on `kind` (Kubernetes 1.35, no user namespaces) with Traefik as the default Ingress class: steps 1, 3, 4, 5, 7 (with "A cluster without user namespaces") and 8 against the export in `fixtures/exit-profile/`; every `Deployment` becomes available and the `tick` CronJob's Job completes |
-| `t1b` | on `kind` with the Gateway API CRDs, Traefik's Gateway provider with a Gateway named `default`, and the CloudNativePG operator, each from its upstream release: the score-k8s route with its `baseline` label and `examples/score-k8s-allow-ingress.yaml`, then the restore of `fixtures/data/maindb.dump` with `pg_restore` (step 6), then a check that `web` reads its mounted files and variables and answers through the Gateway |
+| `t1b` | on `kind` with the Gateway API CRDs, Traefik's Gateway provider with a Gateway named `default`, and the CloudNativePG operator, each from its upstream release: the score-k8s route with its `baseline` label and `examples/score-k8s-allow-ingress.yaml`, then the restore of `fixtures/data/maindb.dump` with `pg_restore` (step 6), then a check that `web` reads its mounted files and variables and answers through the Gateway; first `bin/test-second-route.sh` on `fixtures/second-route/` (an app built from source): the second route's `images.sh rewrite` lines leave every `image:` in the score-k8s output on the destination registry, and the same block without the `overrides` line fails that check |
 
 Each cluster job lists its README commands, fails when one is missing from this
 file, and runs the same strings. The export is signed in the job with a key it
