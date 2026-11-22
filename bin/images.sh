@@ -12,22 +12,24 @@
 # `copy` and `rewrite` name the same path.
 #
 # `copy` copies each image by digest to <dest-registry>/<path> with `crane`, so
-# the digest is preserved. A digest that names an index is copied whole: every
-# platform it lists. Run it before retrieval of the cell export ends: the images
-# live in the zone registry, and that registry goes with the account
-# (design/145 §4.4 step 5, §2.1 kind 5). A row with no image (the cell's
+# the digest is preserved. It reads the reference in images.json, so it serves an
+# image in a public registry; an image in the zone registry needs a credential
+# Glenr does not hand over, and goes through `load`. A digest that names an index
+# is copied whole: every platform it lists. A row with no image (the cell's
 # database) carries nothing to copy and is skipped.
 #
 # `load` pushes the images Glenr hands over as OCI archives, for an image that
 # sits in the zone registry. Glenr hands over no credential for that registry, so
 # `copy` cannot read it; the hand-over holds `<images-dir>/<env>/<app>.tar` for
 # each such image instead (an `oci-archive`, one image per file). For every row of
-# <env> in images.json, `load` extracts the archive, refuses it unless the SHA-256
-# of its manifest equals the digest `images.json` records for the row, and pushes
-# it with `crane` to the destination `copy` would write (<dest-registry>/<path>),
-# then reads the digest back from the destination. The digest does not change. A
-# row with no archive at that path is skipped with a line on stderr: it is an
-# image `copy` moves from a public registry. `load` fails when it loaded nothing.
+# <env> in images.json, `load` extracts the archive and refuses it unless every
+# file under blobs/sha256/ hashes to its own name and the manifest's SHA-256
+# equals the digest `images.json` records for the row. It then pushes the archive
+# with `crane` to the destination `copy` would write (<dest-registry>/<path>) and
+# reads the digest back from the destination. The digest does not change. A row
+# with no archive at that path is skipped with a line on stderr: it is an image
+# `copy` moves from a public registry. `load` fails when it loaded nothing. It
+# handles the rows in order: a refusal stops it, and rows pushed before it stay.
 #
 # `rewrite` changes the registry host of every `image:` value under the
 # manifests directory to <dest-registry>, keeping the path and the digest, so
@@ -163,7 +165,7 @@ load)
 	[ -n "$env" ] || usage
 	rows=$(image_rows "$images" "$dest" "$env") || exit 2
 	work=$(mktemp -d)
-	trap 'rm -rf "$work"' EXIT
+	trap 'chmod -R u+rwX "$work" 2>/dev/null; rm -rf "$work"' EXIT
 	loaded=0
 	while IFS=$'\t' read -r app src to; do
 		if [ -z "$app" ]; then
@@ -186,8 +188,20 @@ load)
 			echo "images: $app records the digest '$want', which is not sha256:<64 hex>" >&2
 			exit 1
 		fi
+		# The row's `digest` field and the digest in its `image` must agree.
+		recorded=$(jq -r --arg a "$app" --arg e "$env" '[.apps[]? | select(.name == $a) | .environments[]? | select(.environment == $e) | (.digest // "")] | map(select(. != "")) | first // ""' "$images")
+		if [ -n "$recorded" ] && [ "$recorded" != "$want" ]; then
+			echo "images: $app records two digests for $env: $want in its image and $recorded in its digest field" >&2
+			exit 1
+		fi
 		layout="$work/$app"
 		mkdir -p "$layout"
+		# An uncompressed tar carries "ustar" at byte 257; a compressed file does
+		# not, and extracting it would expand without a bound.
+		if [ "$(dd if="$archive" bs=1 skip=257 count=5 2>/dev/null)" != ustar ]; then
+			echo "images: $archive is not an uncompressed tar archive" >&2
+			exit 1
+		fi
 		# The archive is untrusted input: refuse an entry that is not a file or a
 		# directory, and a name that is absolute or climbs out of the directory.
 		if ! listing=$(tar -tvf "$archive" 2>/dev/null); then
@@ -204,7 +218,7 @@ load)
 		fi
 		tar -xf "$archive" -C "$layout" --no-same-owner --no-same-permissions
 		[ -f "$layout/index.json" ] || { echo "images: $archive is not an OCI archive (no index.json)" >&2; exit 1; }
-		count=$(jq -r '(.manifests // []) | length' "$layout/index.json") || { echo "images: $archive has no readable index.json" >&2; exit 1; }
+		count=$(jq -r 'if (.manifests | type) == "array" then (.manifests | length) else "none" end' "$layout/index.json") || { echo "images: $archive has no readable index.json" >&2; exit 1; }
 		if [ "$count" != 1 ]; then
 			echo "images: $archive lists $count images; expected 1" >&2
 			exit 1
@@ -213,6 +227,18 @@ load)
 		if ! [[ "$listed" =~ ^sha256:[0-9a-f]{64}$ ]]; then
 			echo "images: $archive lists the manifest digest '$listed', which is not sha256:<64 hex>" >&2
 			exit 1
+		fi
+		# Every file under blobs/sha256/ must hash to its own name: the manifest
+		# names the config and the layers, and a registry that does not check them
+		# would take the manifest without them.
+		if [ -d "$layout/blobs/sha256" ]; then
+			while IFS= read -r -d '' f; do
+				name=${f##*/}
+				if [ "sha256:$(sha256sum <"$f" | cut -d' ' -f1)" != "sha256:$name" ]; then
+					echo "images: REFUSED $app: the archive's file blobs/sha256/$name does not hash to its name" >&2
+					exit 1
+				fi
+			done < <(find "$layout/blobs/sha256" -type f -print0)
 		fi
 		# Hash the manifest file itself: the name index.json gives it is a claim.
 		blob="$layout/blobs/sha256/${listed#sha256:}"

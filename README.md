@@ -84,27 +84,26 @@ export no longer matches `MANIFEST` after it.
 
 ### 2. Move the images to your registry
 
-An image built from your repository sits in the Glenr zone registry, and that
-registry closes when retrieval ends. Glenr hands over no credential for it.
-Glenr staff hand each such image over as a file instead: `images/<env>/<app>.tar`,
-one OCI archive per image. Put the `images` directory next to this repository
-and run `load`. An image in a public registry has no archive: run `copy` for it.
-Then point the manifests at the registry you moved the images to (design/145
-§4.4 step 5).
+Move each image to a registry you control, then point the manifests at it
+(design/145 §4.4 step 5). Use `load` for an image with an archive at
+`images/<env>/<app>.tar` (an OCI archive, one image per file): put the `images`
+directory inside this repository's directory, next to `export/`. Use `copy` for an
+image in a public registry, which has no archive. Run `load` once for each
+environment you apply.
 
 ```sh
 crane auth login <your-registry>            # once, however your registry wants it
 bin/images.sh plan    ./export/images.json  <your-registry>   # optional: list what load and copy do
 bin/images.sh load    ./export/images.json  ./images production <your-registry>   # images handed over as archives
-bin/images.sh copy    ./export/images.json  <your-registry>   # images in public registries only
+bin/images.sh copy    ./export/images.json  <your-registry>   # only when every image is in a public registry
 bin/images.sh rewrite ./export/manifests    <your-registry>
 ```
 
 | Command | What it does |
 |---|---|
 | `plan` | prints one line per image, `<source>` TAB `<destination>`, and moves nothing |
-| `load` | for each image of the environment (`production` above) that has an archive `./images/<env>/<app>.tar`: extracts the archive, refuses it when the SHA-256 of its manifest differs from the `sha256:` digest `images.json` records, and pushes it to `<your-registry>/<path>` with `crane`. It then reads the digest back from your registry and fails when it differs. A row with no archive is skipped with a line on stderr. `load` fails when it loaded no archive |
-| `copy` | copies each image to `<your-registry>/<path>`, where `<path>` is the source reference without its registry host (`library/postgres`, not `postgres`). It copies by the `sha256:` digest when `images.json` records one, and by the reference as written (its tag) otherwise. It reads every row with an image, so it stops at an image in the Glenr zone registry: run it only for an export whose images are all in public registries |
+| `load` | for each image of the environment (`production` above) that has an archive `./images/<env>/<app>.tar`: extracts the archive, refuses it when a file under `blobs/sha256/` does not hash to its name or when the SHA-256 of its manifest differs from the `sha256:` digest `images.json` records, and pushes it to `<your-registry>/<path>` with `crane`. It then reads the digest back from your registry and fails when it differs. A row with no archive is skipped with a line on stderr. `load` fails when it loaded no archive |
+| `copy` | copies each image to `<your-registry>/<path>`, where `<path>` is the source reference without its registry host (`library/postgres`, not `postgres`). It copies by the `sha256:` digest when `images.json` records one, and by the reference as written (its tag) otherwise. It reads every row with an image, so it stops at an image it cannot read without a credential: run it only when every image is in a public registry |
 | `rewrite` | changes only the registry host in every `image:` value and keeps the path and digest, so each reference names a path `load` or `copy` filled |
 
 `load` and `copy` write each image to the same `<path>`. An export that holds

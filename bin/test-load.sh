@@ -41,7 +41,7 @@ echo "== README step 2: its load command pushes the archive and the digest does 
 newreg
 # The README's line, with its comment removed, run from a directory laid out as
 # the README says: ./export/images.json, ./images/<env>/<app>.tar, bin/.
-cmd=$(grep -m1 '^bin/images.sh load ' "$here/README.md" | sed 's/[[:space:]]*#.*$//')
+cmd=$(grep -m1 '^bin/images.sh load ' "$here/README.md" | sed 's/[[:space:]]*#.*$//' || true)
 [ -n "$cmd" ] || fail "README.md has no line starting with: bin/images.sh load"
 mkdir -p "$work/readme/export"
 cp "$fx/images.json" "$work/readme/export/images.json"
@@ -103,7 +103,39 @@ expect_refused "archive holds a symlink" "not a file or directory" "$fx/images.j
 # The file is not a tar archive.
 mkdir -p "$work/m4/images/production"
 printf 'not a tar archive\n' >"$work/m4/images/production/api.tar"
-expect_refused "not a tar archive" "not a tar archive" "$fx/images.json" "$work/m4/images"
+expect_refused "not a tar archive" "not an uncompressed tar" "$fx/images.json" "$work/m4/images"
+
+# The archive's config blob (named by the manifest) has one byte more.
+cfg=$(tar -xOf "$fx/images/production/api.tar" "./blobs/sha256/${want#sha256:}" | jq -r '.config.digest')
+mkdir -p "$work/m5/layout" "$work/m5/images/production"
+tar -xf "$fx/images/production/api.tar" -C "$work/m5/layout"
+printf ' ' >>"$work/m5/layout/blobs/sha256/${cfg#sha256:}"
+tar -cf "$work/m5/images/production/api.tar" -C "$work/m5/layout" .
+expect_refused "config blob changed" "REFUSED api" "$fx/images.json" "$work/m5/images"
+
+# The archive holds a hard link.
+mkdir -p "$work/m6/layout" "$work/m6/images/production"
+tar -xf "$fx/images/production/api.tar" -C "$work/m6/layout"
+printf 'x\n' >"$work/m6/layout/a" && ln "$work/m6/layout/a" "$work/m6/layout/b"
+tar -cf "$work/m6/images/production/api.tar" -C "$work/m6/layout" .
+expect_refused "archive holds a hard link" "not a file or directory" "$fx/images.json" "$work/m6/images"
+
+# The archive holds a name that climbs out of its directory.
+mkdir -p "$work/m7/layout" "$work/m7/images/production"
+tar -xf "$fx/images/production/api.tar" -C "$work/m7/layout"
+printf 'x\n' >"$work/m7/layout/up"
+tar -cf "$work/m7/images/production/api.tar" -C "$work/m7/layout" --transform 's,^\./up$,../up,' .
+tar -tf "$work/m7/images/production/api.tar" | grep -qx '\.\./up' || fail "the test archive m7 holds no ../ name"
+expect_refused "archive holds a ../ name" "outside its own directory" "$fx/images.json" "$work/m7/images"
+
+# The archive is compressed (gzip), which tar would extract without a bound.
+mkdir -p "$work/m8/images/production"
+gzip -c "$fx/images/production/api.tar" >"$work/m8/images/production/api.tar"
+expect_refused "compressed archive" "not an uncompressed tar" "$fx/images.json" "$work/m8/images"
+
+# images.json records two digests for the row.
+jq '(.apps[] | select(.name == "api") | .environments[] | select(.environment == "production") | .digest) = "sha256:3333333333333333333333333333333333333333333333333333333333333333"' "$fx/images.json" >"$work/two-digests.json"
+expect_refused "images.json digest and image disagree" "two digests" "$work/two-digests.json" "$fx/images"
 
 echo "== load refuses the wrong number of arguments =="
 rc=0
