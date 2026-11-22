@@ -1,0 +1,35 @@
+{
+  "apps": [
+    {
+      "name": "api",
+      "source": {"repository": "https://github.com/glenr-cloud/pulse", "provider": "github", "path": "api"},
+      "dockerfile_path": "Dockerfile",
+      "build_strategy": "dockerfile",
+      "environments": [
+        {
+          "environment": "production",
+          "git_ref": "main",
+          "image": "registry.glenr.example/exitsrc/api@sha256:d362494094a2ac2c4f6c4b2e3675eeb6014a93c4ada3e14757788cdd5e199a6d",
+          "digest": "sha256:d362494094a2ac2c4f6c4b2e3675eeb6014a93c4ada3e14757788cdd5e199a6d"
+        }
+      ]
+    },
+    {
+      "name": "cache",
+      "source": {"repository": "https://hub.docker.com/_/busybox", "provider": "dockerhub"},
+      "build_strategy": "image",
+      "environments": [
+        {
+          "environment": "production",
+          "image": "PUBLIC_HOST/library/cache@PUBLIC_DIGEST",
+          "digest": "PUBLIC_DIGEST"
+        },
+        {
+          "environment": "staging",
+          "image": "registry.glenr.example/exitsrc/cache-staging@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+          "digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      ]
+    }
+  ]
+}

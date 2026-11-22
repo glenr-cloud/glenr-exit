@@ -22,6 +22,10 @@
 # (a kind 5 hand-over file) into a local registry with images.sh load, reads the
 # digest back with crane, and proves load refuses each changed archive.
 #
+# The `mixed` job runs README step 2's `load` and `copy` lines on an export with
+# one archive image and one image in a local registry that stands in for a public
+# one; both end in a second local registry at the digest images.json records.
+#
 # Runs on GitHub-hosted runners only (D-145.6 condition 2). This repository is
 # public; a public repo must never run a fork's pull request on a self-hosted
 # runner, so no `self-hosted` or `glenr-ci` label may appear here.
@@ -99,6 +103,25 @@ jobs:
       # Runs the README's `load` line as written, then the refusals.
       - name: Load the fixture archive and refuse the changed ones
         run: bash bin/test-load.sh
+
+  # `load` then `copy` on an export with archives and public images (design/150
+  # KIT-ROUTES): every image lands at the recorded digest. No cluster needed.
+  mixed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          archive=/tmp/crane.tar.gz
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${CRANE_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C /tmp crane
+          sudo mv /tmp/crane /usr/local/bin/crane
+          crane version
+      - name: Load, then copy, a mixed export
+        run: bash bin/test-mixed.sh
 
   # Gate check 7: apply the fixture export on kind (T1); P-1 and P-3.
   t1:
