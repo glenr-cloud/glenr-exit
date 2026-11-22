@@ -19,17 +19,23 @@ export and in this README.
 |---|---|---|---|---|
 | 2026-11-21 | Steps 1 to 8, environments `production` and `staging` | a test cell on a Glenr zone: a service with a public route and 2 named ports, a worker, a cron job and a PostgreSQL database seeded with 10,000 rows; glenr-api `eef8f7fa` | k3s v1.37.2 on one server, installed with the upstream script and no flags; a second server ran the steps | Every object applied (13 per environment). The 13 objects use only `v1`, `apps/v1`, `batch/v1` and `networking.k8s.io/v1`; the cluster had no `glenr.io` CRD and no Glenr pod. Both Deployments available; the cron job's Job completed. Each pod ran the digest in `images.json`. `GET /` and a check endpoint returned the same status and body SHA-256 as on Glenr; the check endpoint covers the plain file, the secret file, the environment secret, the variable and a write to the scratch volume. Row counts after `pg_restore` equal the counts in the dump. DNS capture on both servers: 0 queries for a name containing `glenr` (1,082 query lines) |
 | 2026-11-22 | The second route, `staging` | the same cell, exported again with glenr-api `9efdae75` | the same cluster | Rendered and applied; `GET /` returned the same status and body SHA-256 as on Glenr, the second port answered, and the check endpoint showed the same plain file, secret file, variable and scratch write as on Glenr. Not measured on this route: the image digest, DNS and row-count checks of the first route. Two items differ by design of this route: the environment Secret that Glenr passes with `envFrom` (the Score document does not carry it) and the database connection (the `postgres` provisioner creates an empty CloudNativePG cluster) |
+| 2026-11-22 | Steps 1 to 5, 7 and 8 (no database, so no step 6), environment `production`, for an app built from source | a test cell on a Glenr zone with one service built from a repository and a public route; its image handed over as an OCI archive (`images/production/api.tar`) and pushed with `bin/images.sh load` to `ttl.sh`; no database | k3s v1.37.2 on one server, installed with the upstream script and no flags; a second server ran the steps | `verify.sh` passed with no network. The archive's manifest SHA-256 equals the digest in `images.json`; `load` exited 0 and an anonymous `crane digest` of the `ttl.sh` copy equals that digest. After `rewrite`, the one `image:` in `manifests/` names `ttl.sh` at that digest and no file under `manifests/` names a Glenr host. 8 objects applied with exit 0; the Deployment was available 10 s after the apply; the pod's image digest equals the digest in `images.json`. `GET /` and `GET /healthz` returned the same status and body SHA-256 as on Glenr. DNS capture on both servers: 0 queries for a name containing `glenr` (233 query lines) |
 
 Kit commits used: `eb21531` and `4b1ba70` (first route), `589d222` (second
-route). Limits of this test:
+route), `e5a86c5` (source-built app). Limits of this test:
 
 - One run on one cluster, from a test cell. Your cluster, apps and data differ.
 - The DNS capture sees DNS only; a hard-coded address or DNS over HTTPS would
   not show.
-- The test image was in a public registry, so step 2 did not read the Glenr
-  zone registry with a hand-over credential, and `bin/images.sh rewrite` did
-  not rewrite a zone registry host on a real cluster (CI tests that rewrite on
-  a fixture).
+- In the first two runs the test image was in a public registry, so step 2
+  did not read the Glenr zone registry and `bin/images.sh rewrite` did not
+  rewrite a zone registry host on a real cluster. The third run did: its image
+  was in the zone registry, Glenr handed it over as an archive (no registry
+  credential), and `bin/images.sh load` pushed it. `bin/images.sh copy` from a
+  zone registry is unsupported, because Glenr hands over no credential for it.
+- The third run applied `manifests/` only. The second route (score-k8s) was
+  not run on the source-built app, and an export that holds both archives and
+  public images was not run.
 - TLS was not exercised: every request used plain HTTP.
 
 ## What an export holds
