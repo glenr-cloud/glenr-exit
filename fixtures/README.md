@@ -71,3 +71,17 @@ The archive was made with `crane` v0.22.1, on `crane registry serve` in memory:
 `tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf api.tar -C layout .`
 with `layout/` set to mode `u=rwX,go=rX`, and `layer.tar` made the same way from
 `hello.txt`.
+
+## `second-route/`
+
+`second-route/` holds the input of `bin/test-second-route.sh` and a step of the
+`t1b` job (design/150 KIT-REWRITE): the export of an app Glenr built from
+source. `images.json`, `score-k8s/web.yaml` and
+`overrides/production/web.score.yaml` each name
+`lz7.apps.glenr.io/exitsrc/exit-src/web@sha256:c4637041…caaef`, the shape of the
+GLE-3444 export. The script runs the README's second-route code block with a
+destination registry, asserts that every `image:` in the score-k8s output is
+`<registry>/exitsrc/exit-src/web@<fixture digest>`, then runs the block without
+its `images.sh rewrite ./export/overrides` line and requires the assertion to
+fail (the mutant). The fixture holds no cluster object: the case needs
+`score-k8s`, `yq` and `jq` only.

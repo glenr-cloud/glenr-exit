@@ -1,0 +1,12 @@
+# Size and image of web in production (Glenr export v1.4). The image is the one
+# images.json records: the zone registry, which the customer cannot read.
+containers:
+    main:
+        image: lz7.apps.glenr.io/exitsrc/exit-src/web@sha256:c4637041d654875358d442586feb8ce716f5aa53fb2d409b90315985234caaef
+        resources:
+            limits:
+                cpu: 500m
+                memory: 512Mi
+            requests:
+                cpu: 500m
+                memory: 512Mi
