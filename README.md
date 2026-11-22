@@ -208,11 +208,20 @@ Then render:
 bin/images.sh rewrite ./export/score-k8s <your-registry>
 cd ./export
 mkdir -p .score-k8s && cp glenr.provisioners.yaml .score-k8s/
-score-k8s init --no-sample --patch-templates overrides/production/score-k8s-patch.tpl
+score-k8s init --no-sample --patch-templates overrides/production/score-k8s-patch.tpl --patch-templates ../examples/score-k8s-run-as-user.tpl
 score-k8s generate score-k8s/web.yaml \
   --overrides-file overrides/production/web.score.yaml \
   --namespace <namespace> -o manifests.yaml
 ```
+
+`examples/score-k8s-run-as-user.tpl` is the second patch template in the `init`
+command. A Score document in `score-k8s/` that carries the annotation
+`glenr.io/run-as-user: "<uid>"` or `"<uid>:<gid>"` ran as that user in Glenr,
+and score-k8s does not read the annotation. The template writes `runAsUser`,
+`runAsGroup` (only with a gid) and `runAsNonRoot: true` into the pod
+`securityContext` of each such workload, so an image that needs a fixed
+non-root user starts as it did there. A document without the annotation is
+unchanged. The `manifests/` route already carries the three fields.
 
 Compare each `image:` in `score-k8s/` with the destinations
 `bin/images.sh plan` printed: a path that is not in that list was not copied,

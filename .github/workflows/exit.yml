@@ -55,6 +55,19 @@ jobs:
           yq --version
       - name: Self-test (verify, check, rewrite)
         run: bash bin/selftest.sh
+      # examples/score-k8s-run-as-user.tpl: the three pod fields for a document that
+      # carries glenr.io/run-as-user, and nothing for one that does not.
+      - name: Install score-k8s
+        run: |
+          set -euo pipefail
+          archive=/tmp/score-k8s.tar.gz
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/score-spec/score-k8s/releases/download/${SCORE_K8S_VERSION}/score-k8s_${SCORE_K8S_VERSION}_linux_amd64.tar.gz"
+          echo "${SCORE_K8S_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C /tmp score-k8s
+          sudo mv /tmp/score-k8s /usr/local/bin/score-k8s
+      - name: run-as-user patch template
+        run: bash bin/test-run-as-user.sh
 
   # Gate check 7: apply the fixture export on kind (T1); P-1 and P-3.
   t1:
@@ -225,7 +238,7 @@ jobs:
           cd export
           lines=(
             'mkdir -p .score-k8s && cp glenr.provisioners.yaml .score-k8s/'
-            'score-k8s init --no-sample --patch-templates overrides/production/score-k8s-patch.tpl'
+            'score-k8s init --no-sample --patch-templates overrides/production/score-k8s-patch.tpl --patch-templates ../examples/score-k8s-run-as-user.tpl'
             'score-k8s generate score-k8s/web.yaml'
             '--overrides-file overrides/production/web.score.yaml'
             '--namespace <namespace> -o manifests.yaml'
