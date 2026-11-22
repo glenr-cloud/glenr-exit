@@ -41,6 +41,10 @@ for f in images.json score-k8s/web.yaml overrides/production/web.score.yaml; do
 	grep -qF "$want" "$fx/$f" || fail "fixture: $f does not carry $want"
 done
 
+# The destination `images.sh plan` prints for the fixture's one image row.
+plan=$("$here/bin/images.sh" plan "$fx/images.json" "$dest" | cut -f2)
+[ "$(printf '%s\n' "$plan" | grep -c .)" = 1 ] || fail "fixture: plan printed other than one destination: $plan"
+
 # route <name> <block> — lay the fixture out as the README says (./export,
 # bin/, examples/), run <block> there and leave the score-k8s output in
 # $work/<name>/export/manifests.yaml.
@@ -59,9 +63,8 @@ route() {
 # check_images <name> — every image in the output is <dest>/<plan path>@<digest>.
 # Prints the reason and returns 1 when one is not.
 check_images() {
-	local name=$1 out="$work/$1/export/manifests.yaml" plan to ref n=0
+	local name=$1 out="$work/$1/export/manifests.yaml" ref n=0
 	[ -s "$out" ] || { echo "$name: score-k8s wrote no manifests.yaml" >&2; return 1; }
-	plan=$("$here/bin/images.sh" plan "$fx/images.json" "$dest" | cut -f2)
 	[ -n "$plan" ] || { echo "$name: images.sh plan printed no destination" >&2; return 1; }
 	while IFS= read -r ref; do
 		[ -n "$ref" ] || continue
@@ -78,9 +81,8 @@ check_images() {
 echo "== README second route: every image in the score-k8s output names $dest with the fixture digest =="
 grep -qF 'images.sh rewrite ./export/overrides' <<<"$block" || fail "README block has no 'images.sh rewrite ./export/overrides' line"
 route route "$block"
-ov=$("$here/bin/images.sh" plan "$fx/images.json" "$dest" | cut -f2)
-[ "$(yq '.containers.main.image' "$work/route/export/overrides/production/web.score.yaml")" = "$ov@$want" ] \
-	|| fail "rewrite did not set containers.main.image of the override to $ov@$want"
+[ "$(yq '.containers.main.image' "$work/route/export/overrides/production/web.score.yaml")" = "$plan@$want" ] \
+	|| fail "rewrite did not set containers.main.image of the override to $plan@$want"
 check_images route || fail "the README's second route leaves a zone image in the output"
 
 echo "== mutant: the README block without the overrides rewrite must fail the assertion =="

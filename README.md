@@ -225,9 +225,8 @@ from the same operator file as the one at the root of this repository;
 the operator's.
 
 Step 2 rewrote only `manifests/`. Point the Score documents and the override
-files at your registry too: an `image` in an override file replaces the one in
-the Score document. score-k8s writes no `securityContext` into its Deployments, so the
-namespace's Pod Security level `restricted` refuses them. After step 4, set the
+files at your registry too. score-k8s writes no `securityContext` into its
+Deployments, so the namespace's Pod Security level `restricted` refuses them. After step 4, set the
 level to `baseline`, and allow ingress into the namespace: step 4's
 default-deny NetworkPolicy has no allow policy for this route (the `manifests/`
 route carries `web-from-ingress`; score-k8s renders none).
