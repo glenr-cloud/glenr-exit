@@ -8,14 +8,17 @@ route, `score-k8s`.
 
 Licence: Apache-2.0 (`LICENSE`).
 
-Status: Glenr ran both routes of this README once, end to end, on a test cell
-(design/145 gate checks 6 and 10; label: Live, one run). Every check passed
-with no edit to any exported file.
+Status: Glenr ran both routes of this README end to end on a test cell
+(design/145 gate checks 6 and 10; label: Live). The table lists the passing
+run of each route: every check passed with no manual edit (the only change to
+exported files was `bin/images.sh rewrite`, as the steps say). Earlier runs on
+older exports, on 2026-11-20 and 2026-11-21, failed and led to fixes in the
+export and in this README.
 
 | Date (UTC) | Route | Export | Cluster | Result |
 |---|---|---|---|---|
 | 2026-11-21 | Steps 1 to 8, environments `production` and `staging` | a test cell on a Glenr zone: a service with a public route and 2 named ports, a worker, a cron job and a PostgreSQL database seeded with 10,000 rows; glenr-api `eef8f7fa` | k3s v1.37.2 on one server, installed with the upstream script and no flags; a second server ran the steps | Every object applied (13 per environment). The 13 objects use only `v1`, `apps/v1`, `batch/v1` and `networking.k8s.io/v1`; the cluster had no `glenr.io` CRD and no Glenr pod. Both Deployments available; the cron job's Job completed. Each pod ran the digest in `images.json`. `GET /` and a check endpoint returned the same status and body SHA-256 as on Glenr; the check endpoint covers the plain file, the secret file, the environment secret, the variable and a write to the scratch volume. Row counts after `pg_restore` equal the counts in the dump. DNS capture on both servers: 0 queries for a name containing `glenr` (1,082 query lines) |
-| 2026-11-22 | The second route, `staging` | the same cell, exported again with glenr-api `9efdae75` | the same cluster | Rendered, applied and served `GET /` and the check endpoint with the same files, variable and scratch write as on Glenr. Two items differ by design of this route: the environment Secret that Glenr passes with `envFrom` (the Score document does not carry it) and the database connection (the `postgres` provisioner creates an empty CloudNativePG cluster) |
+| 2026-11-22 | The second route, `staging` | the same cell, exported again with glenr-api `9efdae75` | the same cluster | Rendered and applied; `GET /` returned the same status and body SHA-256 as on Glenr, the second port answered, and the check endpoint showed the same plain file, secret file, variable and scratch write as on Glenr. Not measured on this route: the image digest, DNS and row-count checks of the first route. Two items differ by design of this route: the environment Secret that Glenr passes with `envFrom` (the Score document does not carry it) and the database connection (the `postgres` provisioner creates an empty CloudNativePG cluster) |
 
 Kit commits used: `eb21531` and `4b1ba70` (first route), `589d222` (second
 route). Limits of this test:
@@ -27,8 +30,7 @@ route). Limits of this test:
   zone registry with a hand-over credential, and `bin/images.sh rewrite` did
   not rewrite a zone registry host on a real cluster (CI tests that rewrite on
   a fixture).
-- TLS issuance on the cluster was not tested; Traefik served its default
-  certificate.
+- TLS was not exercised: every request used plain HTTP.
 
 ## What an export holds
 
