@@ -38,7 +38,7 @@ route), `e5a86c5` (source-built app). Limits of this test:
   not run on the source-built app: for such an app it is rendered in CI (the
   `t1b` step `bin/test-second-route.sh`: the `rewrite` lines, then
   `score-k8s generate` offline, and the generated `image:` names the
-  destination), not run on a cluster. Its step 5 applied
+  destination), not run on a cluster. The third run's step 5 applied
   `secrets/<env>.example.yaml` unchanged: the cell has no secret.
 - An export that holds both archives and public images is loaded and copied in
   CI (the job `mixed`: two local registries, no cluster), not run on a cluster.
