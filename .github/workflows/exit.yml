@@ -14,6 +14,10 @@
 # throwaway key and proves verify.sh and check.sh accept a good export and
 # refuse each bad case, and that images.sh rewrite keeps the digest.
 #
+# The `load` job pushes the fixture archive fixtures/load/images/production/api.tar
+# (a kind 5 hand-over file) into a local registry with images.sh load, reads the
+# digest back with crane, and proves load refuses each changed archive.
+#
 # Runs on GitHub-hosted runners only (D-145.6 condition 2). This repository is
 # public; a public repo must never run a fork's pull request on a self-hosted
 # runner, so no `self-hosted` or `glenr-ci` label may appear here.
@@ -38,6 +42,9 @@ env:
   GATEWAY_API_VERSION: v1.6.3
   CNPG_VERSION: 1.30.2
   YQ_VERSION: v4.54.3
+  CRANE_VERSION: v0.22.1
+  # SHA-256 of go-containerregistry_Linux_x86_64.tar.gz (checksums.txt of the release).
+  CRANE_SHA256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
   SCORE_K8S_VERSION: "0.22.0"
   # SHA-256 of score_k8s_0.22.0_linux_amd64.tar.gz (checksums.txt of the release).
   SCORE_K8S_SHA256: d32f190d6278943d85cfecfacdee31146ff56b5fa148d6fe2850da1fa237d2f0
@@ -68,6 +75,26 @@ jobs:
           sudo mv /tmp/score-k8s /usr/local/bin/score-k8s
       - name: run-as-user patch template
         run: bash bin/test-run-as-user.sh
+
+  # images.sh load (design/150 KIT-LOAD): a kind 5 archive into a local registry,
+  # digest unchanged; each changed archive refused. No cluster needed.
+  load:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          archive=/tmp/crane.tar.gz
+          curl -fsSL --retry 3 -o "$archive" \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "${CRANE_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" -C /tmp crane
+          sudo mv /tmp/crane /usr/local/bin/crane
+          crane version
+      # Runs the README's `load` line as written, then the refusals.
+      - name: Load the fixture archive and refuse the changed ones
+        run: bash bin/test-load.sh
 
   # Gate check 7: apply the fixture export on kind (T1); P-1 and P-3.
   t1:
